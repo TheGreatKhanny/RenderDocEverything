@@ -74,6 +74,7 @@
   RESOURCE_DEF(hourglass, "hourglass.png")                                     \
   RESOURCE_DEF(house, "house.png")                                             \
   RESOURCE_DEF(information, "information.png")                                 \
+  RESOURCE_DEF(kw_export_resourcelist, "kw_export_resourcelist.png")                                               \
   RESOURCE_DEF(link, "link.png")                                               \
   RESOURCE_DEF(page_go, "page_go.png")                                         \
   RESOURCE_DEF(page_white_code, "page_white_code.png")                         \

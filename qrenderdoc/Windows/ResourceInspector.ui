@@ -73,6 +73,20 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QToolButton" name="saveListInfo">
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../Resources/resources.qrc">
+          <normaloff>:/kw_export_resourcelist.png</normaloff>:/kw_export_resourcelist.png</iconset>
+        </property>
+        <property name="autoRaise">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>

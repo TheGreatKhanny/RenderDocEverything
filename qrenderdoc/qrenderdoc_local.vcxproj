@@ -2097,6 +2097,8 @@
     <Image Include="Resources\icon.ico" />
     <Image Include="Resources\information%402x.png" />
     <Image Include="Resources\information.png" />
+    <Image Include="Resources\kw_export_resourcelist%402x.png" />
+    <Image Include="Resources\kw_export_resourcelist.png" />
     <Image Include="Resources\link%402x.png" />
     <Image Include="Resources\link.png" />
     <Image Include="Resources\page_go%402x.png" />

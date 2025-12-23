@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * The MIT License (MIT)
  *
  * Copyright (c) 2017-2026 Baldur Karlsson
@@ -31,6 +31,37 @@
 #include "Widgets/Extended/RDHeaderView.h"
 #include "toolwindowmanager/ToolWindowManagerArea.h"
 #include "ui_ResourceInspector.h"
+
+// kw
+#include <QDebug>
+#include <QString>
+#include <QFile>
+#include <QTextStream>
+
+#define TEXT QString::fromLocal8Bit
+
+void kwSaveStringToFile(const QString &content, const QString &filePath)
+{
+  QFile file(filePath);
+  if(file.open(QIODevice::WriteOnly | QIODevice::Text))
+  {
+    QTextStream out(&file);
+    out.setCodec("UTF-8");
+    out << content;
+    file.close();
+  }
+  else
+  {
+    qWarning() << "无法打开文件：" << filePath;
+  }
+}
+bool IsQStringEmpty(const QString &Str)
+{
+  return Str.isEmpty() || Str.isNull() ||
+         QString::compare(Str, TEXT(" "), Qt::CaseSensitivity::CaseInsensitive) == 0;
+}
+
+
 
 static const int ResourceIdRole = Qt::UserRole;
 static const int FilterRole = Qt::UserRole + 1;
@@ -162,7 +193,7 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
   m_FilterModel->collator()->setCaseSensitivity(Qt::CaseInsensitive);
 
   ui->sortType->addItems(
-      {tr("Sort alphabetically"), tr("Sort by creation time"), tr("Sort by recently viewed")});
+      {tr("Sort alphabetically"), tr("Sort by creation time"), tr("Sort by recently viewed"), tr("Fully Export(No blacklist filter)")});
   ui->sortType->adjustSize();
 
   ui->resourceList->setModel(m_FilterModel);
@@ -602,6 +633,126 @@ void ResourceInspector::on_resetName_clicked()
   m_Resource = ResourceId();
   Inspect(id);
 }
+
+
+QString TextureTypeAsString(const TextureType& type)
+{
+  switch(type)
+  {
+    case TextureType::Buffer: return TEXT("Buffer");
+    case TextureType::Texture1D: return TEXT("Texture1D");
+    case TextureType::Texture1DArray: return TEXT("Texture1DArray");
+    case TextureType::Texture2D: return TEXT("Texture2D");
+    case TextureType::TextureRect: return TEXT("TextureRect");
+    case TextureType::Texture2DArray: return TEXT("Texture2DArray");
+    case TextureType::Texture2DMS: return TEXT("Texture2DMS");
+    case TextureType::Texture2DMSArray: return TEXT("Texture2DMSArray");
+    case TextureType::Texture3D: return TEXT("Texture3D");
+    case TextureType::TextureCube: return TEXT("TextureCube");
+    case TextureType::TextureCubeArray: return TEXT("TextureCubeArray");
+    default: ;
+  }
+  return TEXT("Unknown");
+}
+
+bool IsTextureNameInBlackList(const QString& name)
+{
+  static QList<QString> BlackList = {
+    // Unnamed Tex
+    TEXT("2D Texture"),
+    TEXT("3D Texture"),
+    // Common Tex
+    TEXT("Black2D"),
+    TEXT("Blue2D"),
+    TEXT("NormalMap2D"),
+    TEXT("Red2D"),
+    TEXT("Orange2D"),
+    TEXT("Grey2D"),
+    TEXT("Transparent2D"),
+    TEXT("White2D"),
+    // Feature or Pipeline Tex
+    TEXT("BakedSheltermapRender"),
+    TEXT("mBluredVSM"),
+    TEXT("CocosRenderRT"),
+    TEXT("CloudLerpPass::"),
+    TEXT("CloudRender::"),
+    TEXT("CocosRenderRT"),
+    TEXT("DilatedMotionVector"),
+    TEXT("Distribution"),
+    TEXT("Exposure"),
+    TEXT("FakeSM"),
+    TEXT("GBufferMap"),
+    TEXT("HexDof::"),
+    TEXT("HexLocalHdr::"),
+    TEXT("HexMarchingShadow::"),
+    TEXT("HierarchicalZCS"),
+    TEXT("InternalUpscaled"),
+    TEXT("LockStatus"),
+    TEXT("LuminanceHistory"),
+    TEXT("PersistFrameCopy::"),
+    TEXT("PositionBuffer"),
+    TEXT("PreGBuffer"),
+    TEXT("PropertyBuffer"),
+    TEXT("ReflectionProbe"),
+    TEXT("RenderTargetPool "),
+    TEXT("ScreenSpaceReflection::"),
+    TEXT("SecPropertyBuffer"),
+    TEXT("SheltermapRender::mCurrMap"),
+    TEXT("SHGITexArraySH"),
+    TEXT("SVGFDenoiser::Filter::"),
+    TEXT("Swapchain"),
+    TEXT("tDeformation"),
+    TEXT("UniformRandom2D"),
+    TEXT("VBSkeletonTexture"),
+    TEXT("VelocityBuffer"),
+    TEXT("VolumetricFog"),
+    TEXT("VT IndirectionTexture"),
+    TEXT("WindMap3DPhase"),
+  };
+  for(const QString& Elem: BlackList)
+  {
+    if(name.startsWith(Elem, Qt::CaseInsensitive)) return true;
+  }
+  return false;
+}
+
+void ResourceInspector::on_saveListInfo_clicked()
+{
+  QString LogStr = TEXT("----     美术资源贴图导出列表(@KanWu)     ----\t内存大小KB\t贴图宽度\t贴图高度\t深度\t数组数量\tMip数\t贴图类型\n");
+  bool bCheckBlackList = m_FilterModel->getSortType() != ResourceSorterModel::SortType::AlphabeticalFull;
+  
+  for(int row = 0; row < m_FilterModel->rowCount(); row++)
+  {
+    QModelIndex index = m_FilterModel->index(row, 0);
+    // Get name
+    QString name = index.data(Qt::DisplayRole).toString();
+    if(IsQStringEmpty(name))
+      continue;
+    if(bCheckBlackList && IsTextureNameInBlackList(name)) 
+      continue;
+    
+    // Get resource
+    ResourceId id = index.data(ResourceIdRole).value<ResourceId>();
+
+    // Check if its texture
+    TextureDescription *tex = m_Ctx.GetTexture(id);
+    if(!tex) continue;
+
+    QString RowStr = QString::asprintf("\"%s\"\t%llu\t%d\t%d\t%d\t%d\t%d\t\"%s\"\n", 
+        name.toLocal8Bit().constData(), 
+        tex->byteSize / 1024llu, 
+        tex->width,
+        tex->height,
+        tex->depth,
+        tex->arraysize, 
+        tex->mips, 
+        TextureTypeAsString(tex->type).toLocal8Bit().constData()
+    );
+    LogStr += RowStr;
+  }
+  kwSaveStringToFile(LogStr, TEXT("c:/RD导出_贴图信息.csv"));
+}
+
 
 void ResourceInspector::on_sortType_currentIndexChanged(int index)
 {

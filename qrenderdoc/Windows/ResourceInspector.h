@@ -51,6 +51,7 @@ public:
     Alphabetical = 0,
     Creation,
     LastAccess,
+    AlphabeticalFull,
   };
   explicit ResourceSorterModel(QObject *parent = Q_NULLPTR) : QCollatorSortFilterProxyModel(parent)
   {
@@ -65,7 +66,10 @@ public:
       sort(0);
     }
   }
-
+  SortType getSortType() const
+  { 
+    return m_Sort;
+  }
 protected:
   virtual bool lessThan(const QModelIndex &source_left,
                         const QModelIndex &source_right) const override;
@@ -102,6 +106,9 @@ public slots:
   void on_cancelResourceListFilter_clicked();
   void on_resourceListFilter_textChanged(const QString &text);
 
+  // kw: Add new button for exporting resource list infos. 20251223 
+  void on_saveListInfo_clicked();
+  // kw: Add new button for exporting resource list infos. 20251223 ~end
   // manual slots
   void resource_doubleClicked(const QModelIndex &index);
   void resourceUsage_contextMenu(const QPoint &pos);

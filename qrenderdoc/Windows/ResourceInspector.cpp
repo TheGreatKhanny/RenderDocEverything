@@ -37,6 +37,10 @@
 #include <QString>
 #include <QFile>
 #include <QTextStream>
+#include <QMessageBox>
+#include <QDir>
+#include <QDesktopServices>
+#include <QUrl>
 
 #define TEXT QString::fromLocal8Bit
 
@@ -192,8 +196,13 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
   m_FilterModel->collator()->setNumericMode(true);
   m_FilterModel->collator()->setCaseSensitivity(Qt::CaseInsensitive);
 
-  ui->sortType->addItems(
-      {tr("Sort alphabetically"), tr("Sort by creation time"), tr("Sort by recently viewed"), tr("Fully Export(No blacklist filter)")});
+  ui->sortType->addItems({tr("Sort alphabetically"), tr("Sort by creation time"),
+                          tr("Sort by recently viewed"), tr("Fully Export(No blacklist filter)"),
+                          tr("Filter Export with TexSize >= 512"),  // MemSize(KB) >= 341
+                          tr("Filter Export with TexSize >= 1024"), // MemSize(KB) >= 1365
+                          tr("Filter Export with TexSize > 1024"),  // MemSize(KB) >  1365
+                          tr("Filter Export with TexSize >= 2048"), // MemSize(KB) >= 5461
+                         });
   ui->sortType->adjustSize();
 
   ui->resourceList->setModel(m_FilterModel);
@@ -716,11 +725,100 @@ bool IsTextureNameInBlackList(const QString& name)
   return false;
 }
 
+
+bool ResourceInspector::FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr,
+                       QString FileName,
+                       const QString &FilePath)
+{
+  if(!texptr) return false;
+
+  if(texptr->type != TextureType::Texture2D) return false;
+  
+  m_SaveConfig.resourceId = resourceId;
+  m_SaveConfig.destType = FileType::PNG;
+  
+  ANALYTIC_SET(Export.Texture, true);
+
+  FileName = FileName.replace(TEXT("/"), TEXT("左"));
+  FileName = FileName.replace(TEXT("\\"), TEXT("右"));
+  FileName = FileName.replace(TEXT(":"), TEXT("冒"));
+  FileName = FileName.replace(TEXT("*"), TEXT("乘"));
+  FileName = FileName.replace(TEXT(";"), TEXT("分"));
+  FileName = FileName.replace(TEXT(","), TEXT("逗"));
+
+  ResultDetails result = {ResultCode::Succeeded};
+  QString fn = FilePath + TEXT("/") + FileName + TEXT(".png");
+  
+  m_Ctx.Replay().BlockInvoke([this, &result, fn](IReplayController *r) { result = r->SaveTexture(m_SaveConfig, fn); });
+
+  return result.OK();
+}
+
+uint64_t GetExportLimit(const ResourceSorterModel::SortType& sortType)
+{
+    switch (sortType)
+    {
+      case ResourceSorterModel::SortType::ExportTex_GE_512: return 341llu;
+      case ResourceSorterModel::SortType::ExportTex_GE_1024: return 1365llu;
+      case ResourceSorterModel::SortType::ExportTex_G_1024: return 1366llu;
+      case ResourceSorterModel::SortType::ExportTex_GE_2048: return 5461llu;
+      default: return 9999999999llu;
+    }
+}
+
+bool clearDirectory(const QString &dirPath)
+{
+  QDir dir(dirPath);
+  if(!dir.exists())
+  {
+    return false;    // 目录不存在
+  }
+
+  // 获取所有条目（包括文件和子目录）
+  QFileInfoList entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
+
+  for(const QFileInfo &entry : entries)
+  {
+    if(entry.isDir())
+    {
+      // 递归删除子目录及其内容
+      if(!clearDirectory(entry.absoluteFilePath()))
+      {
+        return false;
+      }
+      // 删除空子目录
+      if(!dir.rmdir(entry.fileName()))
+      {
+        return false;
+      }
+    }
+    else
+    {
+      // 删除文件
+      if(!QFile::remove(entry.absoluteFilePath()))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 void ResourceInspector::on_saveListInfo_clicked()
 {
+  // Create Folder
+  const QString FolderPath = TEXT("C:/RD导出/贴图");
+  QDir().mkpath(FolderPath);
+  QDesktopServices::openUrl(QUrl::fromLocalFile(FolderPath));
+
   QString LogStr = TEXT("----     美术资源贴图导出列表(@KanWu)     ----\t内存大小KB\t贴图宽度\t贴图高度\t深度\t数组数量\tMip数\t贴图类型\n");
   bool bCheckBlackList = m_FilterModel->getSortType() != ResourceSorterModel::SortType::AlphabeticalFull;
   
+  uint64_t ExportLimit = GetExportLimit(m_FilterModel->getSortType());
+  
+  int ValidTexInfoNum = 0;
+  int SavedTexNum = 0;
+
   for(int row = 0; row < m_FilterModel->rowCount(); row++)
   {
     QModelIndex index = m_FilterModel->index(row, 0);
@@ -738,9 +836,10 @@ void ResourceInspector::on_saveListInfo_clicked()
     TextureDescription *tex = m_Ctx.GetTexture(id);
     if(!tex) continue;
 
+    uint64_t memSize = tex->byteSize / 1024llu;
     QString RowStr = QString::asprintf("\"%s\"\t%llu\t%d\t%d\t%d\t%d\t%d\t\"%s\"\n", 
         name.toLocal8Bit().constData(), 
-        tex->byteSize / 1024llu, 
+        memSize, 
         tex->width,
         tex->height,
         tex->depth,
@@ -749,8 +848,18 @@ void ResourceInspector::on_saveListInfo_clicked()
         TextureTypeAsString(tex->type).toLocal8Bit().constData()
     );
     LogStr += RowStr;
+    if(memSize >= ExportLimit)
+    {
+      if(FastSaveTexture2D(id, tex, name, FolderPath))
+        SavedTexNum++;
+    }
+    ValidTexInfoNum++;
   }
-  kwSaveStringToFile(LogStr, TEXT("c:/RD导出_贴图信息.csv"));
+  kwSaveStringToFile(LogStr, TEXT("C:/RD导出/RD导出_贴图信息.csv"));
+
+  QMessageBox::information(nullptr, TEXT("成功导出贴图信息"),
+    QString::asprintf("TexNum: %d, LargeTex2DNum: %d", ValidTexInfoNum, SavedTexNum)
+  );
 }
 
 

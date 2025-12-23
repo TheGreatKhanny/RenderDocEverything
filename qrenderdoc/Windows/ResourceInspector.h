@@ -52,6 +52,10 @@ public:
     Creation,
     LastAccess,
     AlphabeticalFull,
+    ExportTex_GE_512,
+    ExportTex_GE_1024,
+    ExportTex_G_1024,
+    ExportTex_GE_2048,
   };
   explicit ResourceSorterModel(QObject *parent = Q_NULLPTR) : QCollatorSortFilterProxyModel(parent)
   {
@@ -96,6 +100,12 @@ public:
   void OnCaptureClosed() override;
   void OnSelectedEventChanged(uint32_t eventId) override {}
   void OnEventChanged(uint32_t eventId) override;
+  // kw: Add new button for exporting resource list infos. 20251223
+public:
+  TextureSave m_SaveConfig;
+  bool FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr, QString FileName,
+                         const QString &FilePath);
+  // kw: Add new button for exporting resource list infos. 20251223 ~end
 public slots:
   // automatic slots
   void on_renameResource_clicked();

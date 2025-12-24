@@ -198,6 +198,7 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
 
   ui->sortType->addItems({tr("Sort alphabetically"), tr("Sort by creation time"),
                           tr("Sort by recently viewed"), tr("Fully Export(No blacklist filter)"),
+                          tr("Filter Export with TexSize > -1"),    // Any MemSize(KB)
                           tr("Filter Export with TexSize >= 512"),  // MemSize(KB) >= 341
                           tr("Filter Export with TexSize >= 1024"), // MemSize(KB) >= 1365
                           tr("Filter Export with TexSize > 1024"),  // MemSize(KB) >  1365
@@ -281,6 +282,10 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
   vertical->addWidget(ui->titleWidget);
   vertical->addWidget(ui->dockarea);
 
+  // kw: Add new button for exporting resource list infos. 20251223
+  ui->exportFolderPath->setPlaceholderText(QString::fromLocal8Bit("请填写文件路径..."));
+  ui->exportFolderPath->setText(ExportFolderPath);
+  // kw: Add new button for exporting resource list infos. 20251223 ~end
   ui->resourceListFilter->setPlaceholderText(tr("Filter..."));
 
   Inspect(ResourceId());
@@ -758,6 +763,7 @@ uint64_t GetExportLimit(const ResourceSorterModel::SortType& sortType)
 {
     switch (sortType)
     {
+      case ResourceSorterModel::SortType::ExportTex_Any: return 0u;
       case ResourceSorterModel::SortType::ExportTex_GE_512: return 341llu;
       case ResourceSorterModel::SortType::ExportTex_GE_1024: return 1365llu;
       case ResourceSorterModel::SortType::ExportTex_G_1024: return 1366llu;
@@ -804,11 +810,41 @@ bool clearDirectory(const QString &dirPath)
   return true;
 }
 
+void ResourceInspector::on_exportFolderPath_textChanged(const QString &text)
+{
+  QString TempText = text;
+  TempText = TempText.replace(TEXT("\\"), TEXT("/"));
+  TempText = TempText.replace(TEXT(","), TEXT(""));
+  TempText = TempText.replace(TEXT("\t"), TEXT(""));
+  TempText = TempText.replace(TEXT("\n"), TEXT(""));
+  TempText = TempText.replace(TEXT("."), TEXT(""));
+  TempText = TempText.replace(TEXT("'"), TEXT(""));
+  TempText = TempText.replace(TEXT("\""), TEXT(""));
+  TempText = TempText.replace(TEXT(";"), TEXT(""));
+  TempText = TempText.replace(TEXT("//"), TEXT("/"));
+  TempText = TempText.replace(TEXT("//"), TEXT("/"));
+  TempText = TempText.replace(TEXT("//"), TEXT("/"));
+  if(!TempText.endsWith(TEXT("/")))
+  {
+    TempText += TEXT("/");
+  }
+  ExportFolderPath = TempText;
+  ui->exportFolderPath->setText(ExportFolderPath);
+}
+
+
 void ResourceInspector::on_saveListInfo_clicked()
 {
   // Create Folder
-  const QString FolderPath = TEXT("C:/RD导出/贴图");
+  QString FolderPath = ExportFolderPath + TEXT("贴图");
   QDir().mkpath(FolderPath);
+  QDir CheckDir(FolderPath);
+  if(!CheckDir.exists())
+  {
+    QMessageBox::warning(nullptr, TEXT("错误"), TEXT("请填写有效的文件路径"));
+    return;
+  }
+
   QDesktopServices::openUrl(QUrl::fromLocalFile(FolderPath));
 
   QString LogStr = TEXT("----     美术资源贴图导出列表(@KanWu)     ----\t内存大小KB\t贴图宽度\t贴图高度\t深度\t数组数量\tMip数\t贴图类型\n");
@@ -855,7 +891,7 @@ void ResourceInspector::on_saveListInfo_clicked()
     }
     ValidTexInfoNum++;
   }
-  kwSaveStringToFile(LogStr, TEXT("C:/RD导出/RD导出_贴图信息.csv"));
+  kwSaveStringToFile(LogStr, ExportFolderPath + TEXT("RD导出_贴图信息.csv"));
 
   QMessageBox::information(nullptr, TEXT("成功导出贴图信息"),
     QString::asprintf("TexNum: %d, LargeTex2DNum: %d", ValidTexInfoNum, SavedTexNum)

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * The MIT License (MIT)
  *
  * Copyright (c) 2017-2026 Baldur Karlsson
@@ -52,6 +52,7 @@ public:
     Creation,
     LastAccess,
     AlphabeticalFull,
+    ExportTex_Any,
     ExportTex_GE_512,
     ExportTex_GE_1024,
     ExportTex_G_1024,
@@ -103,8 +104,9 @@ public:
   // kw: Add new button for exporting resource list infos. 20251223
 public:
   TextureSave m_SaveConfig;
-  bool FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr, QString FileName,
-                         const QString &FilePath);
+  bool FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr, QString FileName,const QString &FilePath);
+
+  QString ExportFolderPath = QString::fromLocal8Bit("C:/RD导出/");
   // kw: Add new button for exporting resource list infos. 20251223 ~end
 public slots:
   // automatic slots
@@ -113,12 +115,12 @@ public slots:
   void on_resetName_clicked();
   void on_sortType_currentIndexChanged(int index);
 
-  void on_cancelResourceListFilter_clicked();
-  void on_resourceListFilter_textChanged(const QString &text);
-
-  // kw: Add new button for exporting resource list infos. 20251223 
+  // kw: Add new button for exporting resource list infos. 20251223
+  void on_exportFolderPath_textChanged(const QString &text);
   void on_saveListInfo_clicked();
   // kw: Add new button for exporting resource list infos. 20251223 ~end
+  void on_cancelResourceListFilter_clicked();
+  void on_resourceListFilter_textChanged(const QString &text);
   // manual slots
   void resource_doubleClicked(const QModelIndex &index);
   void resourceUsage_contextMenu(const QPoint &pos);

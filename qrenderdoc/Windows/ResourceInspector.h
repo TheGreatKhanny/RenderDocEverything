@@ -41,6 +41,16 @@ class StructuredDataItemModel;
 class RichTextViewDelegate;
 class AnnotationDisplay;
 
+enum ExportSizeType
+{
+  ExportTex_Any = 0,
+  ExportTex_GE_512,
+  ExportTex_GE_1024,
+  ExportTex_G_1024,
+  ExportTex_GE_2048,
+  ExportTex_Nothing,
+};
+
 class ResourceSorterModel : public QCollatorSortFilterProxyModel
 {
   Q_OBJECT
@@ -52,11 +62,6 @@ public:
     Creation,
     LastAccess,
     AlphabeticalFull,
-    ExportTex_Any,
-    ExportTex_GE_512,
-    ExportTex_GE_1024,
-    ExportTex_G_1024,
-    ExportTex_GE_2048,
   };
   explicit ResourceSorterModel(QObject *parent = Q_NULLPTR) : QCollatorSortFilterProxyModel(parent)
   {
@@ -107,6 +112,8 @@ public:
   bool FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr, QString FileName,const QString &FilePath);
 
   QString ExportFolderPath = QString::fromLocal8Bit("C:/RD导出/");
+  ExportSizeType m_exportSizeType = ExportSizeType::ExportTex_Nothing;
+  bool m_bEnableBlackListType = true;
   // kw: Add new button for exporting resource list infos. 20251223 ~end
 public slots:
   // automatic slots
@@ -116,8 +123,15 @@ public slots:
   void on_sortType_currentIndexChanged(int index);
 
   // kw: Add new button for exporting resource list infos. 20251223
+  void on_exportDrawCall_clicked();
+  void on_exportDrawCallAndDispatch_clicked();
+
   void on_exportFolderPath_textChanged(const QString &text);
   void on_saveListInfo_clicked();
+
+  void on_exportSizeType_currentIndexChanged(int index);
+  void on_bEnableBlackListType_currentIndexChanged(int index);
+
   // kw: Add new button for exporting resource list infos. 20251223 ~end
   void on_cancelResourceListFilter_clicked();
   void on_resourceListFilter_textChanged(const QString &text);

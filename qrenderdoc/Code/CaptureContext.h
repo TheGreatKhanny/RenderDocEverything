@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * The MIT License (MIT)
  *
  * Copyright (c) 2016-2026 Baldur Karlsson
@@ -301,7 +301,7 @@ public:
   const VKPipe::State *CurVulkanPipelineState() override { return m_CurVulkanPipelineState; }
   const PipeState &CurPipelineState() override { return *m_CurPipelineState; }
   PersistantConfig &Config() override { return m_Config; }
-private:
+public:
   ReplayManager m_Replay;
 
   const D3D11Pipe::State *m_CurD3D11PipelineState;
@@ -377,6 +377,56 @@ private:
 
   void setupDockWindow(QWidget *shad, bool hide);
   const rdcarray<ActionDescription> *m_Actions;
+  // kw: Add new button for exporting resource list infos. 20251223
+  const rdcarray<ActionDescription>* GetActions() {
+      return m_Actions;
+  }
+  void GetAllActionsOfType(QList<const ActionDescription *> &OutActions, QList<QString>& OutActionNames,
+                           const rdcarray<ActionDescription> &InActions, const ActionFlags &InFlags, const QString& InParentName) 
+  {
+    QString TempName;
+    for(const ActionDescription &Elem : InActions)
+    {
+      if(Elem.customName.isEmpty())
+      {
+        TempName = InParentName;
+      }
+      else
+      {
+        TempName = InParentName + QString::fromLocal8Bit("【") + Elem.customName +
+                   QString::fromLocal8Bit("】");
+      }
+      if(Elem.flags & InFlags) 
+      {
+        OutActions.push_back(&Elem);
+        OutActionNames.push_back(TempName);
+      }
+      if(!Elem.children.empty())
+      {
+        GetAllActionsOfType(OutActions, OutActionNames, Elem.children, InFlags, TempName);
+      }
+    }
+    
+  }
+  
+  void GetAllEventIdsOfType(QList<uint32_t> &OutEventIds,
+                           const rdcarray<ActionDescription> &actions, const ActionFlags &flags)
+  {
+    for(const ActionDescription &a : actions)
+    {
+      if(a.flags & flags)
+      {
+        OutEventIds.push_back(a.eventId);
+      }
+      if(!a.children.empty())
+      {
+        GetAllEventIdsOfType(OutEventIds, a.children, flags);
+      }
+    }
+  }
+  
+  // kw: Add new button for exporting resource list infos. 20251223 ~end
+
   rdcarray<ActionDescription> m_EmptyActions;
 
   rdcarray<ShaderEncoding> m_CustomEncodings, m_TargetEncodings;

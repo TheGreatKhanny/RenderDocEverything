@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ui version="4.0">
  <class>ResourceInspector</class>
  <widget class="QFrame" name="ResourceInspector">
@@ -45,6 +45,47 @@
      <number>3</number>
     </property>
     <item>
+     <layout class="QHBoxLayout" name="exportMeshInfoControls">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QToolButton" name="exportDrawCall">
+        <property name="text">
+         <string>导出DrawCall信息</string>
+        </property>
+        <property name="icon">
+         <iconset resource="../Resources/resources.qrc">
+          <normaloff>:/kw_export_resourcelist.png</normaloff>:/kw_export_resourcelist.png</iconset>
+        </property>
+        <property name="toolButtonStyle">
+         <enum>Qt::ToolButtonTextBesideIcon</enum>
+        </property>
+        <property name="autoRaise">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="exportDrawCallAndDispatch">
+        <property name="text">
+         <string>导出DrawCall与Dispatch信息</string>
+        </property>
+        <property name="icon">
+         <iconset resource="../Resources/resources.qrc">
+          <normaloff>:/kw_export_resourcelist.png</normaloff>:/kw_export_resourcelist.png</iconset>
+        </property>
+        <property name="toolButtonStyle">
+         <enum>Qt::ToolButtonTextBesideIcon</enum>
+        </property>
+        <property name="autoRaise">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
      <layout class="QHBoxLayout" name="exportResourceControls">
       <property name="spacing">
        <number>0</number>
@@ -60,13 +101,22 @@
        </widget>
       </item>
       <item>
+       <widget class="QComboBox" name="exportSizeType"/>
+      </item>
+      <item>
+       <widget class="QComboBox" name="bEnableBlackListType"/>
+      </item>
+      <item>
        <widget class="QToolButton" name="saveListInfo">
         <property name="text">
-         <string/>
+         <string>导出贴图信息</string>
         </property>
         <property name="icon">
          <iconset resource="../Resources/resources.qrc">
           <normaloff>:/kw_export_resourcelist.png</normaloff>:/kw_export_resourcelist.png</iconset>
+        </property>
+        <property name="toolButtonStyle">
+         <enum>Qt::ToolButtonTextBesideIcon</enum>
         </property>
         <property name="autoRaise">
          <bool>true</bool>

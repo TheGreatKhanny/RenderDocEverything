@@ -41,8 +41,20 @@
 #include <QDir>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QTime>
+#include <QDateTime>
+#include "Code/CaptureContext.h"
+
 
 #define TEXT QString::fromLocal8Bit
+#define NSTR QString::number
+
+QString GetDateTimeStr()
+{
+  QDateTime currentDateTime = QDateTime::currentDateTime();
+  return currentDateTime.toString(TEXT("_yymmdd_hhmmss"));
+}
+
 
 void kwSaveStringToFile(const QString &content, const QString &filePath)
 {
@@ -196,14 +208,28 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
   m_FilterModel->collator()->setNumericMode(true);
   m_FilterModel->collator()->setCaseSensitivity(Qt::CaseInsensitive);
 
-  ui->sortType->addItems({tr("Sort alphabetically"), tr("Sort by creation time"),
-                          tr("Sort by recently viewed"), tr("Fully Export(No blacklist filter)"),
-                          tr("Filter Export with TexSize > -1"),    // Any MemSize(KB)
-                          tr("Filter Export with TexSize >= 512"),  // MemSize(KB) >= 341
-                          tr("Filter Export with TexSize >= 1024"), // MemSize(KB) >= 1365
-                          tr("Filter Export with TexSize > 1024"),  // MemSize(KB) >  1365
-                          tr("Filter Export with TexSize >= 2048"), // MemSize(KB) >= 5461
-                         });
+  // kw: Add new button for exporting resource list infos. 20251223
+  ui->exportSizeType->addItems({
+      TEXT("导出所有2D贴图"),                     // Any MemSize(KB)
+      TEXT("导出Mem >= 341KB的2D贴图(512)"),      // MemSize(KB) >= 341
+      TEXT("导出Mem >= 1365KB的2D贴图(1024)"),    // MemSize(KB) >= 1365
+      TEXT("导出Mem > 1365KB的2D贴图(1024)"),     // MemSize(KB) >  1365
+      TEXT("导出Mem > 5461KB的2D贴图(2048)"),     // MemSize(KB) >= 5461
+      TEXT("不导出贴图"),
+  });
+  ui->exportSizeType->adjustSize();
+  ui->exportSizeType->setCurrentIndex(5);
+
+  ui->bEnableBlackListType->addItems({
+      TEXT("不使用过滤"),
+      TEXT("使用黑名单过滤器"),
+  });
+  ui->bEnableBlackListType->adjustSize();
+  ui->bEnableBlackListType->setCurrentIndex(1);
+
+  // kw: Add new button for exporting resource list infos. 20251223 ~end
+
+  ui->sortType->addItems({tr("Sort alphabetically"), tr("Sort by creation time"), tr("Sort by recently viewed")});
   ui->sortType->adjustSize();
 
   ui->resourceList->setModel(m_FilterModel);
@@ -648,7 +674,7 @@ void ResourceInspector::on_resetName_clicked()
   Inspect(id);
 }
 
-
+// kw: Add new button for exporting resource list infos. 20251223
 QString TextureTypeAsString(const TextureType& type)
 {
   switch(type)
@@ -759,15 +785,15 @@ bool ResourceInspector::FastSaveTexture2D(ResourceId resourceId, TextureDescript
   return result.OK();
 }
 
-uint64_t GetExportLimit(const ResourceSorterModel::SortType& sortType)
+uint64_t GetExportLimit(const ExportSizeType &_exportSizeType)
 {
-    switch (sortType)
+  switch(_exportSizeType)
     {
-      case ResourceSorterModel::SortType::ExportTex_Any: return 0u;
-      case ResourceSorterModel::SortType::ExportTex_GE_512: return 341llu;
-      case ResourceSorterModel::SortType::ExportTex_GE_1024: return 1365llu;
-      case ResourceSorterModel::SortType::ExportTex_G_1024: return 1366llu;
-      case ResourceSorterModel::SortType::ExportTex_GE_2048: return 5461llu;
+      case ExportSizeType::ExportTex_Any: return 0u;
+      case ExportSizeType::ExportTex_GE_512: return 341llu;
+      case ExportSizeType::ExportTex_GE_1024: return 1365llu;
+      case ExportSizeType::ExportTex_G_1024: return 1366llu;
+      case ExportSizeType::ExportTex_GE_2048: return 5461llu;
       default: return 9999999999llu;
     }
 }
@@ -810,6 +836,118 @@ bool clearDirectory(const QString &dirPath)
   return true;
 }
 
+void ResourceInspector::on_exportDrawCall_clicked()
+{
+  QString FolderPath = ExportFolderPath;
+  QDir().mkpath(FolderPath);
+  QDir CheckDir(FolderPath);
+  if(!CheckDir.exists())
+  {
+    QMessageBox::warning(nullptr, TEXT("错误"), TEXT("请填写有效的文件路径"));
+    return;
+  }
+  QDesktopServices::openUrl(QUrl::fromLocalFile(FolderPath));
+
+  CaptureContext *CtxPtr = static_cast<CaptureContext *>(& m_Ctx);
+  const rdcarray<ActionDescription> * m_Actions = CtxPtr->GetActions();
+  QList<const ActionDescription *> OutActions;
+  QList<QString> OutActionNames;
+  const ActionFlags InFlags = ActionFlags::Drawcall;
+  CtxPtr->GetAllActionsOfType(OutActions, OutActionNames, *m_Actions, InFlags, TEXT(""));
+
+  QString EventStr = TEXT("\"事件Id\"\t\"索引数量\"\t\"实例数量\"\t\"顶点计算量(索引x实例)\"\t\"资源路径\"\n");
+  int i = 0;
+  uint64_t TotalIndices = 0;
+  uint64_t TotalInstances = 0;
+  uint64_t TotalVertexCalc = 0;
+  for(auto &Elem : OutActions)
+  {
+    uint64_t VertexCalc = uint64_t(Elem->numIndices) * uint64_t(Elem->numInstances);
+    EventStr += 
+        NSTR(Elem->eventId) + TEXT("\t") + 
+        NSTR(Elem->numIndices) + TEXT("\t") +
+        NSTR(Elem->numInstances) + TEXT("\t") + 
+        NSTR(VertexCalc) +
+                TEXT("\t") + 
+        TEXT("\"") + OutActionNames[i++] + TEXT("\"") + 
+        TEXT("\n")
+    ;
+    TotalIndices += uint64_t(Elem->numIndices);
+    TotalInstances += uint64_t(Elem->numInstances);
+    TotalVertexCalc += VertexCalc;
+    
+  }
+  EventStr += TEXT("\"整体指标\"\t") + NSTR(TotalIndices) + TEXT("\t") +
+              NSTR(TotalInstances) + TEXT("\t") + NSTR(TotalVertexCalc) +
+              TEXT("\t\"整体指标\"\n");
+
+  kwSaveStringToFile(EventStr, FolderPath + TEXT("RD导出_DrawCall信息") + GetDateTimeStr() + TEXT(".csv"));
+  int Num = OutActions.count();
+  QMessageBox::information(nullptr, TEXT("导出DrawCall数据成功"),
+                           TEXT("DrawCall 有 ") + NSTR(Num) + TEXT(" 个\n顶点计算量为 ") +
+                               NSTR(TotalVertexCalc) + TEXT(" 个"));
+}
+
+
+void ResourceInspector::on_exportDrawCallAndDispatch_clicked()
+
+{
+  QString FolderPath = ExportFolderPath;
+  QDir().mkpath(FolderPath);
+  QDir CheckDir(FolderPath);
+  if(!CheckDir.exists())
+  {
+    QMessageBox::warning(nullptr, TEXT("错误"), TEXT("请填写有效的文件路径"));
+    return;
+  }
+  QDesktopServices::openUrl(QUrl::fromLocalFile(FolderPath));
+
+  CaptureContext *CtxPtr = static_cast<CaptureContext *>(&m_Ctx);
+  const rdcarray<ActionDescription> *m_Actions = CtxPtr->GetActions();
+  QList<const ActionDescription *> OutActions;
+  QList<QString> OutActionNames;
+  const ActionFlags InFlags = ActionFlags::Drawcall | ActionFlags::Dispatch | ActionFlags::MeshDispatch;
+  CtxPtr->GetAllActionsOfType(OutActions, OutActionNames, *m_Actions, InFlags, TEXT(""));
+
+  QString EventStr =
+      TEXT("\"事件Id\"\t\"索引数量\"\t\"实例数量\"\t\"顶点计算量(索引x实例)\"\t\"【dispatch维度】\"\t\"【dispatch线程维度】\"\t\"资源路径\"\n");
+  int i = 0;
+  uint64_t TotalIndices = 0;
+  uint64_t TotalInstances = 0;
+  uint64_t TotalVertexCalc = 0;
+  uint64_t TotalDispatchActionCount = 0;
+  uint64_t TotalDispatchCount = 0;
+  for(auto &Elem : OutActions)
+  {
+    uint64_t VertexCalc = uint64_t(Elem->numIndices) * uint64_t(Elem->numInstances);
+    EventStr += NSTR(Elem->eventId) + TEXT("\t") + NSTR(Elem->numIndices) +
+                TEXT("\t") + NSTR(Elem->numInstances) + TEXT("\t") +
+                NSTR(VertexCalc) + TEXT("\t") + 
+                TEXT("\"{") + NSTR(Elem->dispatchDimension[0]) + TEXT(",") + NSTR(Elem->dispatchDimension[1]) + TEXT(",") + NSTR(Elem->dispatchDimension[2]) + TEXT("}\"\t") + 
+                TEXT("\"{") + NSTR(Elem->dispatchThreadsDimension[0]) + TEXT(",") + NSTR(Elem->dispatchThreadsDimension[1]) + TEXT(",") + NSTR(Elem->dispatchThreadsDimension[2]) + TEXT("}\"\t") + 
+                TEXT("\"") + OutActionNames[i++] + TEXT("\"") + TEXT("\n");
+    TotalIndices += uint64_t(Elem->numIndices);
+    TotalInstances += uint64_t(Elem->numInstances);
+    TotalVertexCalc += VertexCalc;
+    if(VertexCalc == 0)
+    {
+      TotalDispatchActionCount++;
+      TotalDispatchCount += Elem->dispatchDimension[0] * Elem->dispatchDimension[1] * Elem->dispatchDimension[2];
+    }
+  }
+  EventStr += TEXT("\"整体指标\"\t") + NSTR(TotalIndices) + TEXT("\t") +
+              NSTR(TotalInstances) + TEXT("\t") + NSTR(TotalVertexCalc) + TEXT("\t") + NSTR(TotalDispatchCount) + 
+              TEXT("\t\"整体指标\"\t\"整体指标\"\n");
+
+  kwSaveStringToFile(EventStr, FolderPath + TEXT("RD导出_DrawCall与Dispatch信息") + GetDateTimeStr() + TEXT(".csv"));
+  int Num = OutActions.count();
+  QMessageBox::information(nullptr, TEXT("导出DrawCall与Dispatch数据成功"),
+                           TEXT("DrawCall 有 ") + NSTR(Num) + TEXT(" 个\n顶点计算量为 ") + NSTR(TotalVertexCalc) + 
+                           TEXT(" 个\nDispatch Action有 ") + NSTR(TotalDispatchActionCount) + 
+                           TEXT(" 个\nDispatch次数有 ") + NSTR(TotalDispatchCount)) + TEXT(" 次。");
+}
+
+
 void ResourceInspector::on_exportFolderPath_textChanged(const QString &text)
 {
   QString TempText = text;
@@ -848,9 +986,8 @@ void ResourceInspector::on_saveListInfo_clicked()
   QDesktopServices::openUrl(QUrl::fromLocalFile(FolderPath));
 
   QString LogStr = TEXT("----     美术资源贴图导出列表(@KanWu)     ----\t内存大小KB\t贴图宽度\t贴图高度\t深度\t数组数量\tMip数\t贴图类型\n");
-  bool bCheckBlackList = m_FilterModel->getSortType() != ResourceSorterModel::SortType::AlphabeticalFull;
-  
-  uint64_t ExportLimit = GetExportLimit(m_FilterModel->getSortType());
+
+  uint64_t ExportLimit = GetExportLimit(m_exportSizeType);
   
   int ValidTexInfoNum = 0;
   int SavedTexNum = 0;
@@ -862,7 +999,7 @@ void ResourceInspector::on_saveListInfo_clicked()
     QString name = index.data(Qt::DisplayRole).toString();
     if(IsQStringEmpty(name))
       continue;
-    if(bCheckBlackList && IsTextureNameInBlackList(name)) 
+    if(m_bEnableBlackListType && IsTextureNameInBlackList(name)) 
       continue;
     
     // Get resource
@@ -891,13 +1028,24 @@ void ResourceInspector::on_saveListInfo_clicked()
     }
     ValidTexInfoNum++;
   }
-  kwSaveStringToFile(LogStr, ExportFolderPath + TEXT("RD导出_贴图信息.csv"));
+  kwSaveStringToFile(LogStr, ExportFolderPath + TEXT("RD导出_贴图信息") + GetDateTimeStr() + TEXT(".csv"));
 
   QMessageBox::information(nullptr, TEXT("成功导出贴图信息"),
     QString::asprintf("TexNum: %d, LargeTex2DNum: %d", ValidTexInfoNum, SavedTexNum)
   );
 }
 
+
+void ResourceInspector::on_exportSizeType_currentIndexChanged(int index)
+{
+  m_exportSizeType = ExportSizeType(index);
+}
+void ResourceInspector::on_bEnableBlackListType_currentIndexChanged(int index)
+{
+  m_bEnableBlackListType = !!index;
+}
+
+// kw: Add new button for exporting resource list infos. 20251223 ~end
 
 void ResourceInspector::on_sortType_currentIndexChanged(int index)
 {

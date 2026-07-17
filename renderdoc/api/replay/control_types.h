@@ -630,23 +630,23 @@ If set to (0, 0, 0, 0) the global checkerboard colors are used.
   uint32_t overlayEndEID = 0;
 
   DOCUMENT(R"(The additive weight contributed by each overdraw for the grayscale overdraw overlay
-:data:`DebugOverlay.QuadOverdrawFrame`. The displayed grayscale is
-``saturate(pow(overdraw * overlayContrastScale, overlayContrastPower))``.
+:data:`DebugOverlay.QuadOverdrawFrame`. The normalised value is ``saturate(overdraw *
+overlayContrastScale)``.
 
 :type: float
 )");
-  float overlayContrastScale = 0.001f;
+  float overlayContrastScale = 0.015f;
 
-  DOCUMENT(R"(The gamma/contrast exponent for the grayscale overdraw overlay
-:data:`DebugOverlay.QuadOverdrawFrame`. See :data:`overlayContrastScale`.
+  DOCUMENT(R"(Retained for compatibility; kept at ``1.0``. The overdraw overlay uses a simple linear
+mapping ``saturate(overdraw * overlayContrastScale)``.
 
 :type: float
 )");
   float overlayContrastPower = 1.0f;
 
   DOCUMENT(R"(The 5 colour stops used to remap the whole-frame overdraw overlay
-:data:`DebugOverlay.QuadOverdrawFrame` after the contrast curve. The normalised value
-``saturate(pow(overdraw * overlayContrastScale, overlayContrastPower))`` is linearly interpolated
+:data:`DebugOverlay.QuadOverdrawFrame`. The normalised value
+``saturate(overdraw * overlayContrastScale)`` is linearly interpolated
 across these 5 colours (stops at 0, 0.25, 0.5, 0.75, 1.0). If the colours are left at their default
 (all zero) a built-in blue-to-red ramp is used.
 

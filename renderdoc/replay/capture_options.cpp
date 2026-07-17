@@ -186,7 +186,7 @@ CaptureOptions::CaptureOptions()
   captureCallstacksOnlyActions = false;
   delayForDebugger = 0;
   verifyBufferAccess = false;
-  hookIntoChildren = false;
+  hookIntoChildren = true;
   refAllResources = false;
   captureAllCmdLists = false;
   debugOutputMute = true;

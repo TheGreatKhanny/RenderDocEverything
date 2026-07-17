@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * The MIT License (MIT)
  *
  * Copyright (c) 2015-2026 Baldur Karlsson
@@ -34,11 +34,13 @@
 #include <QClipboard>
 #include <QColorDialog>
 #include <QDialog>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDoubleValidator>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QImage>
@@ -698,31 +700,22 @@ TextureViewer::TextureViewer(ICaptureContext &ctx, QWidget *parent)
   ui->eidRangeDash->setVisible(false);
   ui->eidRangeEnd->setVisible(false);
 
-  // contrast controls for the grayscale whole-frame overdraw overlay:
-  //   grayscale = pow(overdraw * Add, Pow)
-  m_TexDisplay.overlayContrastScale = 0.001f;
+  // contrast control for the grayscale whole-frame overdraw overlay:
+  //   grayscale = saturate(overdraw * Add)
+  m_TexDisplay.overlayContrastScale = 0.015f;
   m_TexDisplay.overlayContrastPower = 1.0f;
 
   QDoubleValidator *scaleValidator = new QDoubleValidator(0.0, 1000000.0, 7, this);
   scaleValidator->setNotation(QDoubleValidator::StandardNotation);
   scaleValidator->setLocale(QLocale::c());
-  QDoubleValidator *powerValidator = new QDoubleValidator(0.0, 1000.0, 4, this);
-  powerValidator->setNotation(QDoubleValidator::StandardNotation);
-  powerValidator->setLocale(QLocale::c());
   ui->overdrawScale->setValidator(scaleValidator);
-  ui->overdrawPower->setValidator(powerValidator);
-  ui->overdrawScale->setText(lit("0.001"));
-  ui->overdrawPower->setText(lit("1.0"));
+  ui->overdrawScale->setText(lit("0.015"));
 
   QObject::connect(ui->overdrawScale, &QLineEdit::editingFinished, this,
-                   &TextureViewer::overdrawContrast_changed);
-  QObject::connect(ui->overdrawPower, &QLineEdit::editingFinished, this,
                    &TextureViewer::overdrawContrast_changed);
 
   ui->overdrawScaleLabel->setVisible(false);
   ui->overdrawScale->setVisible(false);
-  ui->overdrawPowerLabel->setVisible(false);
-  ui->overdrawPower->setVisible(false);
 
   // 5-stop colour ramp for the whole-frame overdraw overlay, editable via colour buttons.
   // default blue -> cyan -> green -> yellow -> red.
@@ -755,6 +748,8 @@ TextureViewer::TextureViewer(ICaptureContext &ctx, QWidget *parent)
   ui->overdrawStages->setVisible(false);
   ui->overdrawStages->setValidator(new QIntValidator(1, 50, this));
   ui->overdrawStages->setText(lit("5"));
+  ui->reportLang->addItems({lit("中文"), lit("English")});
+  ui->reportLang->setVisible(false);
 
   ui->textureListFilter->addItems({QString(), tr("Textures"), tr("Render Targets")});
 
@@ -3163,14 +3158,10 @@ void TextureViewer::Reset()
     bool ok = false;
     float s = ui->overdrawScale->text().toFloat(&ok);
     if(!ok || s <= 0.0f)
-      s = 0.001f;
-    ok = false;
-    float p = ui->overdrawPower->text().toFloat(&ok);
-    if(!ok || p <= 0.0f)
-      p = 1.0f;
+      s = 0.015f;
 
     m_TexDisplay.overlayContrastScale = s;
-    m_TexDisplay.overlayContrastPower = p;
+    m_TexDisplay.overlayContrastPower = 1.0f;
 
     for(int i = 0; i < 5; i++)
       m_TexDisplay.overlayRampColors[i] =
@@ -3746,8 +3737,6 @@ void TextureViewer::on_overlay_currentIndexChanged(int index)
   ui->eidRangeEnd->setVisible(frameOverdraw);
   ui->overdrawScaleLabel->setVisible(frameOverdraw);
   ui->overdrawScale->setVisible(frameOverdraw);
-  ui->overdrawPowerLabel->setVisible(frameOverdraw);
-  ui->overdrawPower->setVisible(frameOverdraw);
   ui->overdrawRampLabel->setVisible(frameOverdraw);
   ui->rampColor0->setVisible(frameOverdraw);
   ui->rampColor1->setVisible(frameOverdraw);
@@ -3760,6 +3749,7 @@ void TextureViewer::on_overlay_currentIndexChanged(int index)
   ui->selectRegionBtn->setVisible(frameOverdraw);
   ui->overdrawStagesLabel->setVisible(frameOverdraw);
   ui->overdrawStages->setVisible(frameOverdraw);
+  ui->reportLang->setVisible(frameOverdraw);
   if(!frameOverdraw)
     ui->avgOverdrawLabel->setText(QString());
 
@@ -3827,18 +3817,13 @@ void TextureViewer::overdrawContrast_changed()
 
   float scale = (float)ui->overdrawScale->text().toDouble(&ok);
   if(!ok || scale <= 0.0f)
-    scale = 0.001f;
+    scale = 0.015f;
 
-  ok = false;
-  float power = (float)ui->overdrawPower->text().toDouble(&ok);
-  if(!ok || power <= 0.0f)
-    power = 1.0f;
-
-  if(scale == m_TexDisplay.overlayContrastScale && power == m_TexDisplay.overlayContrastPower)
+  if(scale == m_TexDisplay.overlayContrastScale)
     return;
 
   m_TexDisplay.overlayContrastScale = scale;
-  m_TexDisplay.overlayContrastPower = power;
+  m_TexDisplay.overlayContrastPower = 1.0f;
 
   INVOKE_MEMFN(RT_UpdateAndDisplay);
   if(m_Output != NULL && m_PickedPoint.x() >= 0 && m_PickedPoint.y() >= 0)
@@ -4091,16 +4076,32 @@ void TextureViewer::on_overdrawReportBtn_clicked()
   if(m_Output == NULL || GetCurrentTexture() == NULL)
     return;
 
-  QString dir = RDDialog::getExistingDirectory(this, tr("Choose an empty folder for the report"));
+  QString dir = RDDialog::getExistingDirectory(this, tr("Choose a folder for the report"));
 
   if(dir.isEmpty())
     return;
 
-  m_ReportDir = dir;
+  // create a sub-folder named after the capture file + date/time (yy_mm_dd_hh_mm)
+  QString captureBase = QFileInfo(m_Ctx.GetCaptureFilename()).completeBaseName();
+  if(captureBase.isEmpty())
+    captureBase = lit("capture");
+  QString folderName =
+      lit("%1_%2").arg(captureBase).arg(QDateTime::currentDateTime().toString(lit("yy_MM_dd_hh_mm")));
+
+  QDir base(dir);
+  if(!base.mkpath(folderName))
+  {
+    RDDialog::critical(this, tr("Error creating folder"),
+                       tr("Could not create report folder:\n%1").arg(base.filePath(folderName)));
+    return;
+  }
+
+  m_ReportDir = base.filePath(folderName);
 
   bool ok = false;
   int stages = ui->overdrawStages->text().toInt(&ok);
   m_ReportStages = (ok && stages >= 1) ? qMin(stages, 50) : 5;
+  m_ReportChinese = (ui->reportLang->currentIndex() == 0);
 
   ui->avgOverdrawLabel->setText(tr("generating report..."));
 
@@ -4136,6 +4137,7 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
     uint32_t w, h;
     QString fmt;
     uint64_t bytes;
+    uint64_t astc4, astc6, astc8;
     int usedDraws;
   };
   struct PSRow
@@ -4313,6 +4315,7 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
   // 6. save each unique texture as PNG and gather metadata
   std::vector<TexRow> texRows;
   uint64_t totalTexBytes = 0;
+  uint64_t totalAstc4 = 0, totalAstc6 = 0, totalAstc8 = 0;
   int texIndex = 0;
   for(ResourceId t : textures)
   {
@@ -4328,6 +4331,32 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
     row.bytes = td->byteSize;
     row.usedDraws = texUseDraws.count(t) ? texUseDraws[t] : 0;
 
+    // hypothetical size if this texture were ASTC compressed with different block sizes (16 bytes
+    // per block, summed over all mips and array slices).
+    {
+      uint32_t mips = qMax(1u, td->mips);
+      uint32_t slices = qMax(1u, td->arraysize);
+      uint32_t depth0 = qMax(1u, td->depth);
+
+      auto astcSize = [&](uint32_t bw, uint32_t bh) -> uint64_t {
+        uint64_t total = 0;
+        for(uint32_t m = 0; m < mips; m++)
+        {
+          uint32_t mw = qMax(1u, td->width >> m);
+          uint32_t mh = qMax(1u, td->height >> m);
+          uint32_t md = qMax(1u, depth0 >> m);
+          uint64_t bx = (mw + bw - 1) / bw;
+          uint64_t by = (mh + bh - 1) / bh;
+          total += bx * by * (uint64_t)md * 16ull;
+        }
+        return total * slices;
+      };
+
+      row.astc4 = astcSize(4, 4);
+      row.astc6 = astcSize(6, 6);
+      row.astc8 = astcSize(8, 8);
+    }
+
     QString fname = QString(lit("tex_%1.png")).arg(texIndex);
     TextureSave ts;
     ts.resourceId = t;
@@ -4341,6 +4370,9 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
       row.file = fname;
 
     totalTexBytes += td->byteSize;
+    totalAstc4 += row.astc4;
+    totalAstc6 += row.astc6;
+    totalAstc8 += row.astc8;
     texRows.push_back(row);
     texIndex++;
   }
@@ -4451,17 +4483,22 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
   double avgAll = numPixels > 0 ? sum / (double)numPixels : 0.0;
   double avgCovered = covered > 0 ? sum / (double)covered : 0.0;
   QString reportDir = m_ReportDir;
+  bool chinese = m_ReportChinese;
 
   // 7. build the HTML report on the UI thread (resource names need the UI-side cache) and open it
-  GUIInvoke::call(this, [this, reportDir, wholeFrame, start, end, drawCount, haveOverdraw, sum,
-                         avgAll, avgCovered, minOD, maxOD, numPixels, covered, psRows, texRows,
-                         totalTexBytes, outputFile, overdrawFile, stageRows, regionDesc]() {
+  GUIInvoke::call(this, [this, reportDir, chinese, wholeFrame, start, end, drawCount, haveOverdraw,
+                         sum, avgAll, avgCovered, minOD, maxOD, numPixels, covered, psRows, texRows,
+                         totalTexBytes, totalAstc4, totalAstc6, totalAstc8, outputFile, overdrawFile,
+                         stageRows, regionDesc]() {
     auto esc = [](const QString &s) { return s.toHtmlEscaped(); };
+    auto L = [chinese](const QString &cn, const QString &en) { return chinese ? cn : en; };
+    auto MB = [](uint64_t b) { return b / (1024.0 * 1024.0); };
+    auto KB = [](uint64_t b) { return b / 1024.0; };
 
     QString html;
     html += lit("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
-    html += lit("<title>Quad Overdraw (Frame) Report</title><style>");
-    html += lit("body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#222;}");
+    html += lit("<title>%1</title><style>").arg(L(lit("Quad Overdraw (Frame) 报告"), lit("Quad Overdraw (Frame) Report")));
+    html += lit("body{font-family:'Microsoft YaHei',Segoe UI,Arial,sans-serif;margin:24px;color:#222;}");
     html += lit("h1{font-size:20px;}h2{font-size:16px;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px;}");
     html += lit("table{border-collapse:collapse;margin-top:8px;}td,th{border:1px solid #ccc;padding:4px 8px;font-size:13px;text-align:left;}");
     html += lit("th{background:#f0f0f0;}tr:nth-child(even){background:#fafafa;}");
@@ -4471,55 +4508,90 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
     html += lit("img.stageimg{max-width:220px;max-height:160px;border:1px solid #ccc;background:#eee;}");
     html += lit(".num{text-align:right;}</style></head><body>");
 
-    html += lit("<h1>Quad Overdraw (Frame) Report</h1>");
+    html += lit("<h1>%1</h1>").arg(L(lit("Quad Overdraw (Frame) 报告"), lit("Quad Overdraw (Frame) Report")));
     html += lit("<table>");
-    html += lit("<tr><th>EID range</th><td>%1</td></tr>")
-                .arg(wholeFrame ? tr("whole frame") : tr("[%1, %2]").arg(start).arg(end));
-    html += lit("<tr><th>Drawcalls</th><td>%1</td></tr>").arg(drawCount);
-    html += lit("<tr><th>Stat region</th><td>%1</td></tr>").arg(regionDesc.toHtmlEscaped());
+    html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                .arg(L(lit("EID 范围"), lit("EID range")))
+                .arg(wholeFrame ? L(lit("整帧"), lit("whole frame"))
+                                : lit("[%1, %2]").arg(start).arg(end));
+    html += lit("<tr><th>%1</th><td>%2</td></tr>").arg(L(lit("Drawcall 数"), lit("Drawcalls"))).arg(drawCount);
+    html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                .arg(L(lit("统计区域"), lit("Stat region")))
+                .arg(regionDesc.toHtmlEscaped());
     if(haveOverdraw)
     {
-      html += lit("<tr><th>Total overdraw (times)</th><td>%1</td></tr>").arg(sum, 0, 'f', 0);
-      html += lit("<tr><th>Average overdraw (all %1 px)</th><td>%2</td></tr>")
-                  .arg(numPixels)
+      html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                  .arg(L(lit("总 overdraw (次数)"), lit("Total overdraw (times)")))
+                  .arg(sum, 0, 'f', 0);
+      html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                  .arg(L(lit("平均 overdraw (全部 %1 像素)"), lit("Average overdraw (all %1 px)")).arg(numPixels))
                   .arg(avgAll, 0, 'f', 4);
-      html += lit("<tr><th>Average overdraw (%1 covered px)</th><td>%2</td></tr>")
-                  .arg(covered)
+      html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                  .arg(L(lit("平均 overdraw (%1 个被绘制像素)"), lit("Average overdraw (%1 covered px)")).arg(covered))
                   .arg(avgCovered, 0, 'f', 4);
-      html += lit("<tr><th>Min / Max overdraw (single pixel)</th><td>%1 / %2</td></tr>")
+      html += lit("<tr><th>%1</th><td>%2 / %3</td></tr>")
+                  .arg(L(lit("单像素最小 / 最大 overdraw"), lit("Min / Max overdraw (single pixel)")))
                   .arg(minOD, 0, 'f', 0)
                   .arg(maxOD, 0, 'f', 0);
     }
-    html += lit("<tr><th>Unique pixel shaders</th><td>%1</td></tr>").arg(psRows.size());
-    html += lit("<tr><th>Unique textures</th><td>%1 (%2 MB)</td></tr>")
-                .arg(texRows.size())
-                .arg(totalTexBytes / (1024.0 * 1024.0), 0, 'f', 2);
+    html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                .arg(L(lit("唯一 Pixel Shader 数"), lit("Unique pixel shaders")))
+                .arg(psRows.size());
+    html += lit("<tr><th>%1</th><td>%2</td></tr>")
+                .arg(L(lit("唯一贴图数"), lit("Unique textures")))
+                .arg(texRows.size());
     html += lit("</table>");
 
-    html += lit("<h2>Images</h2><div class=\"imgs\">");
+    // memory comparison summary
+    html += lit("<h2>%1</h2>").arg(L(lit("显存对比"), lit("Memory comparison")));
+    html += lit("<p>%1</p>")
+                .arg(L(lit("原始 = 贴图当前 GPU 实际占用。ASTC 各列为「假如全部改用该块大小的 ASTC」的理论占用（每块 16 字节）。"),
+                       lit("Original = current actual GPU memory. The ASTC columns are the hypothetical size if every texture used ASTC with that block size (16 bytes per block).")));
+    html += lit("<table><tr><th>%1</th><th class=\"num\">%2</th></tr>")
+                .arg(L(lit("方案"), lit("Scheme")))
+                .arg(L(lit("总显存 (MB)"), lit("Total (MB)")));
+    html += lit("<tr><td>%1</td><td class=\"num\">%2</td></tr>").arg(L(lit("原始"), lit("Original"))).arg(MB(totalTexBytes), 0, 'f', 2);
+    html += lit("<tr><td>ASTC 4x4</td><td class=\"num\">%1</td></tr>").arg(MB(totalAstc4), 0, 'f', 2);
+    html += lit("<tr><td>ASTC 6x6 (%1)</td><td class=\"num\">%2</td></tr>").arg(L(lit("项目默认"), lit("project default"))).arg(MB(totalAstc6), 0, 'f', 2);
+    html += lit("<tr><td>ASTC 8x8</td><td class=\"num\">%1</td></tr>").arg(MB(totalAstc8), 0, 'f', 2);
+    html += lit("</table>");
+
+    html += lit("<h2>%1</h2><div class=\"imgs\">").arg(L(lit("图片"), lit("Images")));
     if(!outputFile.isEmpty())
-      html += lit("<figure><figcaption>Raw output</figcaption><img src=\"%1\"></figure>").arg(outputFile);
+      html += lit("<figure><figcaption>%1</figcaption><img src=\"%2\"></figure>")
+                  .arg(L(lit("原始输出"), lit("Raw output")))
+                  .arg(outputFile);
     if(!overdrawFile.isEmpty())
-      html += lit("<figure><figcaption>Overdraw (ramp)</figcaption><img src=\"%1\"></figure>")
+      html += lit("<figure><figcaption>%1</figcaption><img src=\"%2\"></figure>")
+                  .arg(L(lit("Overdraw (上色)"), lit("Overdraw (ramp)")))
                   .arg(overdrawFile);
     html += lit("</div>");
 
     if(!stageRows.empty())
     {
-      html += lit("<h2>Stages (%1)</h2>").arg(stageRows.size());
-      html += lit("<p>The EID range is split into equal stages. Each stage's overdraw is computed "
-                  "only for the draws in that stage, so you can see which stage is most expensive. "
-                  "The output image is the accumulated result at the end of the stage.</p>");
-      html += lit("<table><tr><th>Stage</th><th>EID range</th><th class=\"num\">Draws</th>"
-                  "<th class=\"num\">Min OD</th><th class=\"num\">Max OD</th>"
-                  "<th class=\"num\">Avg OD</th><th>Overdraw</th><th>Output</th></tr>");
+      html += lit("<h2>%1 (%2)</h2>").arg(L(lit("阶段"), lit("Stages"))).arg(stageRows.size());
+      html += lit("<p>%1</p>")
+                  .arg(L(lit("EID 区间被等分成若干阶段。每个阶段的 overdraw 只统计该阶段的 draw，因此能看出哪个阶段最费。输出图是该阶段结束时的累积渲染结果。"),
+                         lit("The EID range is split into equal stages. Each stage's overdraw is computed only for the draws in that stage, so you can see which stage is most expensive. The output image is the accumulated result at the end of the stage.")));
+      html += lit("<table><tr><th>%1</th><th>%2</th><th class=\"num\">%3</th>"
+                  "<th class=\"num\">%4</th><th class=\"num\">%5</th><th class=\"num\">%6</th>"
+                  "<th>%7</th><th>%8</th></tr>")
+                  .arg(L(lit("阶段"), lit("Stage")))
+                  .arg(L(lit("EID 范围"), lit("EID range")))
+                  .arg(L(lit("Draws"), lit("Draws")))
+                  .arg(L(lit("最小 OD"), lit("Min OD")))
+                  .arg(L(lit("最大 OD"), lit("Max OD")))
+                  .arg(L(lit("平均 OD"), lit("Avg OD")))
+                  .arg(L(lit("Overdraw"), lit("Overdraw")))
+                  .arg(L(lit("输出"), lit("Output")));
       for(const StageRow &s : stageRows)
       {
+        QString na = L(lit("(无)"), lit("(n/a)"));
         QString odImg = s.overdrawFile.isEmpty()
-                            ? tr("(n/a)")
+                            ? na
                             : lit("<img class=\"stageimg\" src=\"%1\">").arg(s.overdrawFile);
         QString outImg = s.outputFile.isEmpty()
-                             ? tr("(n/a)")
+                             ? na
                              : lit("<img class=\"stageimg\" src=\"%1\">").arg(s.outputFile);
         html += lit("<tr><td>%1</td><td>[%2, %3]</td><td class=\"num\">%4</td>"
                     "<td class=\"num\">%5</td><td class=\"num\">%6</td><td class=\"num\">%7</td>"
@@ -4537,11 +4609,18 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
       html += lit("</table>");
     }
 
-    html += lit("<h2>Pixel shaders (%1)</h2>").arg(psRows.size());
-    html += lit("<table><tr><th>Pixel shader</th><th class=\"num\">Approx instructions</th>"
-                "<th class=\"num\">Textures</th><th class=\"num\">Samplers</th>"
-                "<th class=\"num\">CBuffers</th><th class=\"num\">Interpolants</th>"
-                "<th class=\"num\">Outputs</th></tr>");
+    html += lit("<h2>%1 (%2)</h2>").arg(L(lit("Pixel Shader"), lit("Pixel shaders"))).arg(psRows.size());
+    html += lit("<table><tr><th>%1</th><th class=\"num\">%2</th>"
+                "<th class=\"num\">%3</th><th class=\"num\">%4</th>"
+                "<th class=\"num\">%5</th><th class=\"num\">%6</th>"
+                "<th class=\"num\">%7</th></tr>")
+                .arg(L(lit("Pixel Shader"), lit("Pixel shader")))
+                .arg(L(lit("约指令数"), lit("Approx instructions")))
+                .arg(L(lit("贴图数"), lit("Textures")))
+                .arg(L(lit("采样器"), lit("Samplers")))
+                .arg(L(lit("CBuffer"), lit("CBuffers")))
+                .arg(L(lit("插值量"), lit("Interpolants")))
+                .arg(L(lit("输出数"), lit("Outputs")));
     for(const PSRow &p : psRows)
     {
       html += lit("<tr><td>%1</td><td class=\"num\">%2</td><td class=\"num\">%3</td>"
@@ -4557,21 +4636,33 @@ void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
     }
     html += lit("</table>");
 
-    html += lit("<h2>Textures (%1)</h2>").arg(texRows.size());
-    html += lit("<table><tr><th>Preview</th><th>Name</th><th>Size</th><th>Format</th>"
-                "<th class=\"num\">Memory (KB)</th><th class=\"num\">Used in draws</th></tr>");
+    html += lit("<h2>%1 (%2)</h2>").arg(L(lit("贴图"), lit("Textures"))).arg(texRows.size());
+    html += lit("<table><tr><th>%1</th><th>%2</th><th>%3</th><th>%4</th>"
+                "<th class=\"num\">%5</th><th class=\"num\">ASTC 4x4</th>"
+                "<th class=\"num\">ASTC 6x6</th><th class=\"num\">ASTC 8x8</th>"
+                "<th class=\"num\">%6</th></tr>")
+                .arg(L(lit("预览"), lit("Preview")))
+                .arg(L(lit("名称"), lit("Name")))
+                .arg(L(lit("尺寸"), lit("Size")))
+                .arg(L(lit("格式"), lit("Format")))
+                .arg(L(lit("原始 (KB)"), lit("Original (KB)")))
+                .arg(L(lit("使用 draw 数"), lit("Used in draws")));
     for(const TexRow &t : texRows)
     {
-      QString img = t.file.isEmpty() ? tr("(n/a)")
+      QString img = t.file.isEmpty() ? L(lit("(无)"), lit("(n/a)"))
                                      : lit("<img class=\"thumb\" src=\"%1\">").arg(t.file);
       html += lit("<tr><td>%1</td><td>%2</td><td>%3x%4</td><td>%5</td>"
-                  "<td class=\"num\">%6</td><td class=\"num\">%7</td></tr>")
+                  "<td class=\"num\">%6</td><td class=\"num\">%7</td><td class=\"num\">%8</td>"
+                  "<td class=\"num\">%9</td><td class=\"num\">%10</td></tr>")
                   .arg(img)
                   .arg(esc(QString(m_Ctx.GetResourceName(t.id))))
                   .arg(t.w)
                   .arg(t.h)
                   .arg(esc(t.fmt))
-                  .arg(t.bytes / 1024.0, 0, 'f', 1)
+                  .arg(KB(t.bytes), 0, 'f', 1)
+                  .arg(KB(t.astc4), 0, 'f', 1)
+                  .arg(KB(t.astc6), 0, 'f', 1)
+                  .arg(KB(t.astc8), 0, 'f', 1)
                   .arg(t.usedDraws);
     }
     html += lit("</table></body></html>");

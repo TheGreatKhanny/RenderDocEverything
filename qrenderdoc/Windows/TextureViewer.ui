@@ -331,27 +331,7 @@
        </size>
       </property>
       <property name="toolTip">
-       <string>Additive weight per overdraw for Quad Overdraw (Frame). Grayscale = pow(overdraw * Add, Pow). Default 0.001.</string>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLabel" name="overdrawPowerLabel">
-      <property name="text">
-       <string>Pow</string>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLineEdit" name="overdrawPower">
-      <property name="maximumSize">
-       <size>
-        <width>70</width>
-        <height>16777215</height>
-       </size>
-      </property>
-      <property name="toolTip">
-       <string>Contrast/gamma exponent for Quad Overdraw (Frame). Grayscale = pow(overdraw * Add, Pow). Default 1.0.</string>
+       <string>Additive weight per overdraw for Quad Overdraw (Frame). Grayscale = saturate(overdraw * Add). Default 0.015.</string>
       </property>
      </widget>
     </item>
@@ -444,6 +424,13 @@
       </property>
       <property name="toolTip">
        <string>Number of stages the EID range is split into for the exported report (default 5). Each stage exports its own overdraw and output image plus min/max/avg overdraw.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QComboBox" name="reportLang">
+      <property name="toolTip">
+       <string>Language for the exported report.</string>
       </property>
      </widget>
     </item>

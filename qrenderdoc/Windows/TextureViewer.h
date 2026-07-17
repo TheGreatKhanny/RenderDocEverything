@@ -357,6 +357,7 @@ private:
 
   QString m_ReportDir;
   int m_ReportStages = 5;
+  bool m_ReportChinese = true;
 
   int m_HighWaterStatusLength = 0;
   int m_PrevFirstArraySlice = -1;

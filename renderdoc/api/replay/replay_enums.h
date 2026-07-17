@@ -1542,6 +1542,12 @@ See :ref:`the documentation for this feature <render-overlay>`.
   This is similar to the :data:`TriangleSizePass` overlay, except it only shows the triangle size
   for the current drawcall, not the current pass.
 
+.. data:: QuadOverdrawFrame
+
+  This is the same as the :data:`QuadOverdrawPass` overlay, except it accumulates the overdraw for
+  all draws in the entire frame instead of only the current pass. This gives a whole-frame overdraw
+  heatmap, useful for evaluating total overdraw cost across all passes at once.
+
 )");
 enum class DebugOverlay : uint32_t
 {
@@ -1560,6 +1566,7 @@ enum class DebugOverlay : uint32_t
   QuadOverdrawDraw,
   TriangleSizePass,
   TriangleSizeDraw,
+  QuadOverdrawFrame,
 };
 
 DECLARE_REFLECTION_ENUM(DebugOverlay);

@@ -183,6 +183,27 @@ void main(void)
       color_out = heatmap.ColorRamp[bucket];
       return;
     }
+    else if(heatmap.HeatmapMode == HEATMAP_LOG)
+    {
+      // whole-frame overdraw: normalise the overdraw count with an adjustable contrast curve,
+      //   g = clamp(pow(value * HeatmapScale, HeatmapPower), 0, 1)
+      // then remap g through a 5-stop colour ramp (stops at 0, 0.25, 0.5, 0.75, 1) stored in
+      // ColorRamp[0..4]. Values below 1 are treated as empty (transparent).
+      if(col.x < 0.5f)
+        discard;
+
+      float g = clamp(pow(max(col.x * heatmap.HeatmapScale, 0.0f), heatmap.HeatmapPower), 0.0f, 1.0f);
+
+      float t = g * 4.0f;
+      int idx = int(floor(t));
+      idx = min(idx, 3);
+      float f = t - float(idx);
+
+      vec4 c = mix(heatmap.ColorRamp[idx], heatmap.ColorRamp[idx + 1], f);
+
+      color_out = vec4(c.rgb, 1.0f);
+      return;
+    }
     else if(heatmap.HeatmapMode == HEATMAP_TRISIZE)
     {
       // uninitialised regions have alpha=0

@@ -1033,6 +1033,7 @@ rdcstr DoStringise(const DebugOverlay &el)
     STRINGISE_ENUM_CLASS(QuadOverdrawDraw);
     STRINGISE_ENUM_CLASS(TriangleSizePass);
     STRINGISE_ENUM_CLASS(TriangleSizeDraw);
+    STRINGISE_ENUM_CLASS(QuadOverdrawFrame);
   }
   END_ENUM_STRINGISE();
 }

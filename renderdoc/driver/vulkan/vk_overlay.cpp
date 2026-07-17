@@ -755,12 +755,20 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       multiviewMask |= 1U << v;
   }
 
-  // if the overlay image is the wrong size, free it
+  // for quad overdraw overlays only the R channel is used (the accumulated overdraw count), and
+  // float32 stores integer counts exactly up to 2^24, so use single-channel R32_SFLOAT (1/4 the
+  // memory of RGBA16F). Other overlays store [0,1] RGBA colours.
+  VkFormat overlayFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+  if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+     overlay == DebugOverlay::QuadOverdrawFrame)
+    overlayFormat = VK_FORMAT_R32_SFLOAT;
+
+  // if the overlay image is the wrong size or format, free it
   if(m_Overlay.Image != VK_NULL_HANDLE &&
      (iminfo.extent.width != m_Overlay.ImageDim.width ||
       iminfo.extent.height != m_Overlay.ImageDim.height || iminfo.samples != m_Overlay.Samples ||
       iminfo.mipLevels != m_Overlay.MipLevels || iminfo.arrayLayers != m_Overlay.ArrayLayers ||
-      multiviewMask != m_Overlay.MultiViewMask))
+      multiviewMask != m_Overlay.MultiViewMask || overlayFormat != m_Overlay.Format))
   {
     m_pDriver->vkDestroyRenderPass(m_Device, m_Overlay.NoDepthRP, NULL);
     m_pDriver->vkDestroyFramebuffer(m_Device, m_Overlay.NoDepthFB, NULL);
@@ -775,8 +783,6 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
 
   VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, sub.mip, 1, sub.slice,
                                       sub.numSlices};
-
-  const VkFormat overlayFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
   VkRenderPassMultiviewCreateInfo multiviewRP = {VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO};
   multiviewRP.correlationMaskCount = 1;
@@ -795,6 +801,7 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
     m_Overlay.MipLevels = iminfo.mipLevels;
     m_Overlay.ArrayLayers = iminfo.arrayLayers;
     m_Overlay.Samples = iminfo.samples;
+    m_Overlay.Format = overlayFormat;
     m_Overlay.MultiViewMask = multiviewMask;
 
     VkImageCreateInfo imInfo = {
@@ -3034,7 +3041,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       CHECK_VKR(m_pDriver, vkr);
     }
   }
-  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+          overlay == DebugOverlay::QuadOverdrawFrame)
   {
     if(m_Overlay.m_QuadResolvePipeline[0] != VK_NULL_HANDLE && !state.rastDiscardEnable &&
        m_Overlay.Samples == VK_SAMPLE_COUNT_1_BIT)
@@ -3073,12 +3081,16 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       if(overlay == DebugOverlay::QuadOverdrawDraw)
         events.clear();
 
-      events.push_back(eventId);
+      // for the whole-frame overlay, passEvents already contains every drawcall in the frame
+      // (including the currently selected event), so don't append it again or it would be
+      // double-counted.
+      if(overlay != DebugOverlay::QuadOverdrawFrame)
+        events.push_back(eventId);
 
       // if we're rendering the whole pass, and the first action is a BeginRenderPass, don't include
       // it in the list. We want to start by replaying into the renderpass so that we have the
       // correct state being applied.
-      if(overlay == DebugOverlay::QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
       {
         const ActionDescription *action = m_pDriver->GetAction(events[0]);
         if(action->flags & ActionFlags::BeginPass)

@@ -41,6 +41,8 @@ class ResourcePreview;
 class ThumbnailStrip;
 class TextureGoto;
 class QFileSystemWatcher;
+class QToolButton;
+class QRubberBand;
 class TextureViewer;
 
 struct Following
@@ -179,6 +181,13 @@ private slots:
   void on_sliceFace_currentIndexChanged(int index);
   void on_overlay_currentIndexChanged(int index);
 
+  void eidRange_changed();
+  void overdrawContrast_changed();
+  void rampColor_clicked(int index);
+  void on_avgOverdrawBtn_clicked();
+  void on_overdrawReportBtn_clicked();
+  void on_selectRegionBtn_clicked();
+
   void on_zoomRange_clicked();
   void on_autoFit_clicked();
   void on_autoFit_mouseClicked(QMouseEvent *e);
@@ -208,6 +217,7 @@ private slots:
   // manual slots
   void render_mouseClick(QMouseEvent *e);
   void render_mouseMove(QMouseEvent *e);
+  void render_mouseUnclick(QMouseEvent *e);
   void render_mouseWheel(QWheelEvent *e);
   void render_resize(QResizeEvent *e);
   void render_keyPress(QKeyEvent *e);
@@ -243,6 +253,12 @@ private:
   void RT_PickHoverAndUpdate(IReplayController *);
   void RT_UpdateAndDisplay(IReplayController *);
   void RT_UpdateVisualRange(IReplayController *);
+  void RT_ComputeAvgOverdraw(IReplayController *);
+  void RT_GenerateOverdrawReport(IReplayController *);
+  bool readOverlayCounts(IReplayController *r, rdcarray<float> &counts, uint32_t &w, uint32_t &h);
+  bool readOverlayOverdraw(IReplayController *r, double &sum, uint64_t &covered, uint64_t &numPixels);
+  void computeOverdrawStats(const rdcarray<float> &counts, uint32_t w, uint32_t h, double &minOD,
+                            double &maxOD, double &sum, uint64_t &covered, uint64_t &total);
 
   void UI_UpdateStatusText();
   void UI_UpdateTextureDetails();
@@ -284,6 +300,7 @@ private:
   void rangePoint_Update();
 
   void updateBackgroundColors();
+  void setRampButtonColor(QToolButton *button, QColor col);
 
   bool currentTextureIsLocked() { return m_LockedId != ResourceId(); }
   void setFitToWindow(bool checked);
@@ -330,6 +347,16 @@ private:
   PixelValue m_CurHoverValue = {};
 
   QColor backCol;
+
+  QColor m_OverdrawRampColors[5];
+
+  QRectF m_StatRegionNorm;
+  QRubberBand *m_StatRubberBand = NULL;
+  bool m_SelectingRegion = false;
+  QPoint m_RegionStartPos;
+
+  QString m_ReportDir;
+  int m_ReportStages = 5;
 
   int m_HighWaterStatusLength = 0;
   int m_PrevFirstArraySlice = -1;

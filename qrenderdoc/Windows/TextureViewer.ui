@@ -275,6 +275,188 @@
       </property>
      </widget>
     </item>
+    <item>
+     <widget class="QLabel" name="eidRangeLabel">
+      <property name="text">
+       <string>EID</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="eidRangeStart">
+      <property name="maximumSize">
+       <size>
+        <width>70</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>First event ID (inclusive) to accumulate for Quad Overdraw (Frame). Leave blank for the start of the frame.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="eidRangeDash">
+      <property name="text">
+       <string>-</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="eidRangeEnd">
+      <property name="maximumSize">
+       <size>
+        <width>70</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>Last event ID (inclusive) to accumulate for Quad Overdraw (Frame). Leave blank for the whole frame.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="overdrawScaleLabel">
+      <property name="text">
+       <string>Add</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="overdrawScale">
+      <property name="maximumSize">
+       <size>
+        <width>70</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>Additive weight per overdraw for Quad Overdraw (Frame). Grayscale = pow(overdraw * Add, Pow). Default 0.001.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="overdrawPowerLabel">
+      <property name="text">
+       <string>Pow</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="overdrawPower">
+      <property name="maximumSize">
+       <size>
+        <width>70</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>Contrast/gamma exponent for Quad Overdraw (Frame). Grayscale = pow(overdraw * Add, Pow). Default 1.0.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="overdrawRampLabel">
+      <property name="text">
+       <string>Ramp</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="rampColor0">
+      <property name="toolTip">
+       <string>Colour ramp stop at 0% (lowest overdraw) for Quad Overdraw (Frame).</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="rampColor1">
+      <property name="toolTip">
+       <string>Colour ramp stop at 25% for Quad Overdraw (Frame).</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="rampColor2">
+      <property name="toolTip">
+       <string>Colour ramp stop at 50% for Quad Overdraw (Frame).</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="rampColor3">
+      <property name="toolTip">
+       <string>Colour ramp stop at 75% for Quad Overdraw (Frame).</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="rampColor4">
+      <property name="toolTip">
+       <string>Colour ramp stop at 100% (highest overdraw) for Quad Overdraw (Frame).</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="avgOverdrawBtn">
+      <property name="text">
+       <string>Avg Overdraw</string>
+      </property>
+      <property name="toolTip">
+       <string>Compute the average overdraw over the frame: sum of per-pixel overdraw counts divided by the pixel count.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="selectRegionBtn">
+      <property name="checkable">
+       <bool>true</bool>
+      </property>
+      <property name="text">
+       <string>Region</string>
+      </property>
+      <property name="toolTip">
+       <string>Restrict overdraw statistics to a rectangular region. Click, then drag a rectangle on the image (like a screenshot tool). Drag a tiny box to reset to the whole image. Default is the whole image.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="avgOverdrawLabel">
+      <property name="text">
+       <string/>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="overdrawStagesLabel">
+      <property name="text">
+       <string>Stages</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="overdrawStages">
+      <property name="maximumSize">
+       <size>
+        <width>44</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>Number of stages the EID range is split into for the exported report (default 5). Each stage exports its own overdraw and output image plus min/max/avg overdraw.</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="overdrawReportBtn">
+      <property name="text">
+       <string>Export Report</string>
+      </property>
+      <property name="toolTip">
+       <string>Generate an HTML report for the EID range: drawcall count, min/max/average overdraw, unique textures (with sizes and usage counts), unique pixel shaders (with complexity), and per-stage overdraw/output images. May take a while for large ranges.</string>
+      </property>
+     </widget>
+    </item>
    </layout>
   </widget>
   <widget class="QFrame" name="zoomToolbar">

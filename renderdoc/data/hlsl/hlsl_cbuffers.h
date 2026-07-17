@@ -155,13 +155,18 @@ cbuffer MeshPickData REG(b0)
 #define HEATMAP_DISABLED 0
 #define HEATMAP_LINEAR 1
 #define HEATMAP_TRISIZE 2
+#define HEATMAP_LOG 3
 
 #define HEATMAP_RAMPSIZE 22
 
 cbuffer HeatmapData REG(b1)
 {
   int HeatmapMode;
-  float3 HeatmapPadding;
+  // scale and power used by the logarithmic/grayscale heatmap to adjust contrast:
+  //   grayscale = saturate(pow(value * HeatmapScale, HeatmapPower))
+  float HeatmapScale;
+  float HeatmapPower;
+  float HeatmapPadding;
 
   // must match size of colorRamp on C++ side
   float4 ColorRamp[HEATMAP_RAMPSIZE];

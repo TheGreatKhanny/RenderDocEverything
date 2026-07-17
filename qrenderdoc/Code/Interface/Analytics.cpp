@@ -304,6 +304,7 @@ static struct AnalyticsDocumentation
     DOCUMENT_ANALYTIC(QuadOverdrawDraw, "Did the user use the Quad Overdraw (Draw) overlay?");
     DOCUMENT_ANALYTIC(TriangleSizePass, "Did the user use the Triangle Size (Pass) overlay?");
     DOCUMENT_ANALYTIC(TriangleSizeDraw, "Did the user use the Triangle Size (Draw) overlay?");
+    DOCUMENT_ANALYTIC(QuadOverdrawFrame, "Did the user use the Quad Overdraw (Frame) overlay?");
   } DOCUMENT_ANALYTIC_SECTION(TextureOverlays, "Texture Overlays");
 
   struct
@@ -423,6 +424,7 @@ void AnalyticsSerialise(Analytics &serdb, QVariantMap &values, AnalyticsSerialis
     ANALYTIC_SERIALISE(TextureOverlays.QuadOverdrawDraw);
     ANALYTIC_SERIALISE(TextureOverlays.TriangleSizePass);
     ANALYTIC_SERIALISE(TextureOverlays.TriangleSizeDraw);
+    ANALYTIC_SERIALISE(TextureOverlays.QuadOverdrawFrame);
   }
 
   ANALYTIC_SECTION(CaptureFeatures);

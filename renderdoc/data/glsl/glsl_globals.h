@@ -141,6 +141,7 @@ vec3 CalcCubeCoord(vec2 uv, int face)
 #define HEATMAP_DISABLED 0
 #define HEATMAP_LINEAR 1
 #define HEATMAP_TRISIZE 2
+#define HEATMAP_LOG 3
 
 #define HEATMAP_RAMPSIZE 22
 

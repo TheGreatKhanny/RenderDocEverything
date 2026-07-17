@@ -615,6 +615,45 @@ If set to (0, 0, 0, 0) the global checkerboard colors are used.
 )");
   DebugOverlay overlay = DebugOverlay::NoOverlay;
 
+  DOCUMENT(R"(The first event ID (inclusive) to accumulate for range-limited overlays such as
+:data:`DebugOverlay.QuadOverdrawFrame`. Ignored unless :data:`overlayEndEID` is non-zero.
+
+:type: int
+)");
+  uint32_t overlayStartEID = 0;
+
+  DOCUMENT(R"(The last event ID (inclusive) to accumulate for range-limited overlays such as
+:data:`DebugOverlay.QuadOverdrawFrame`. If zero, the whole frame is accumulated.
+
+:type: int
+)");
+  uint32_t overlayEndEID = 0;
+
+  DOCUMENT(R"(The additive weight contributed by each overdraw for the grayscale overdraw overlay
+:data:`DebugOverlay.QuadOverdrawFrame`. The displayed grayscale is
+``saturate(pow(overdraw * overlayContrastScale, overlayContrastPower))``.
+
+:type: float
+)");
+  float overlayContrastScale = 0.001f;
+
+  DOCUMENT(R"(The gamma/contrast exponent for the grayscale overdraw overlay
+:data:`DebugOverlay.QuadOverdrawFrame`. See :data:`overlayContrastScale`.
+
+:type: float
+)");
+  float overlayContrastPower = 1.0f;
+
+  DOCUMENT(R"(The 5 colour stops used to remap the whole-frame overdraw overlay
+:data:`DebugOverlay.QuadOverdrawFrame` after the contrast curve. The normalised value
+``saturate(pow(overdraw * overlayContrastScale, overlayContrastPower))`` is linearly interpolated
+across these 5 colours (stops at 0, 0.25, 0.5, 0.75, 1.0). If the colours are left at their default
+(all zero) a built-in blue-to-red ramp is used.
+
+:type: Tuple[FloatVector,FloatVector,FloatVector,FloatVector,FloatVector]
+)");
+  rdcfixedarray<FloatVector, 5> overlayRampColors;
+
   static const uint32_t ResolveSamples = ~0U;
 };
 

@@ -487,7 +487,8 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
   }
   else
   {
-    if(overlay == DebugOverlay::QuadOverdrawDraw || overlay == DebugOverlay::QuadOverdrawPass)
+    if(overlay == DebugOverlay::QuadOverdrawDraw || overlay == DebugOverlay::QuadOverdrawPass ||
+       overlay == DebugOverlay::QuadOverdrawFrame)
       RDCWARN("Quad overdraw not supported on GLES", glslVer);
   }
 
@@ -547,11 +548,24 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
   GLint texMips = GetNumMips(texDetails.curType, texDetails.resource.name, texDetails.width,
                              texDetails.height, texDetails.depth);
 
+  // for quad overdraw overlays only the R channel is used (the accumulated overdraw count), and
+  // float32 stores integer counts exactly up to 2^24, so use single-channel R32F (1/4 the memory of
+  // RGBA16F). Other overlays store [0,1] RGBA colours.
+  GLenum overlayInternalFormat = eGL_RGBA16F;
+  GLenum overlayBaseFormat = eGL_RGBA;
+  if((overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+      overlay == DebugOverlay::QuadOverdrawFrame) &&
+     !(IsGLES && !HasExt[EXT_color_buffer_float]))
+  {
+    overlayInternalFormat = eGL_R32F;
+    overlayBaseFormat = eGL_RED;
+  }
+
   // resize (or create) the overlay texture and FBO if necessary
   if(DebugData.overlayTexWidth != texDetails.width ||
      DebugData.overlayTexHeight != texDetails.height ||
      DebugData.overlayTexSamples != texDetails.samples || DebugData.overlayTexMips != texMips ||
-     DebugData.overlayTexSlices != texSlices)
+     DebugData.overlayTexSlices != texSlices || DebugData.overlayTexFormat != overlayInternalFormat)
   {
     if(DebugData.overlayFBO)
     {
@@ -577,30 +591,33 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
     DebugData.overlayTexSamples = texDetails.samples;
     DebugData.overlayTexMips = texMips;
     DebugData.overlayTexSlices = texSlices;
+    DebugData.overlayTexFormat = overlayInternalFormat;
 
     if(DebugData.overlayTexSamples > 1)
     {
       if(DebugData.overlayTexSlices > 1)
       {
         drv.glTextureStorage3DMultisampleEXT(DebugData.overlayTex, texBindingEnum,
-                                             texDetails.samples, eGL_RGBA16F, texDetails.width,
-                                             texDetails.height, texSlices, true);
+                                             texDetails.samples, overlayInternalFormat,
+                                             texDetails.width, texDetails.height, texSlices, true);
       }
       else
       {
         drv.glTextureStorage2DMultisampleEXT(DebugData.overlayTex, texBindingEnum, texDetails.samples,
-                                             eGL_RGBA16F, texDetails.width, texDetails.height, true);
+                                             overlayInternalFormat, texDetails.width,
+                                             texDetails.height, true);
       }
     }
     else
     {
-      GLint internalFormat = eGL_RGBA16F;
-      GLenum format = eGL_RGBA;
+      GLint internalFormat = overlayInternalFormat;
+      GLenum format = overlayBaseFormat;
       GLenum type = eGL_FLOAT;
 
       if(IsGLES && !HasExt[EXT_color_buffer_float])
       {
         internalFormat = eGL_RGBA8;
+        format = eGL_RGBA;
         type = eGL_UNSIGNED_BYTE;
       }
 
@@ -2015,7 +2032,8 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
         ReplayLog(eventId, eReplay_WithoutDraw);
     }
   }
-  else if(overlay == DebugOverlay::QuadOverdrawDraw || overlay == DebugOverlay::QuadOverdrawPass)
+  else if(overlay == DebugOverlay::QuadOverdrawDraw || overlay == DebugOverlay::QuadOverdrawPass ||
+          overlay == DebugOverlay::QuadOverdrawFrame)
   {
     if(DebugData.quadoverdrawFragShader)
     {
@@ -2034,7 +2052,11 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
       if(overlay == DebugOverlay::QuadOverdrawDraw)
         events.clear();
 
-      events.push_back(eventId);
+      // for the whole-frame overlay, passEvents already contains every drawcall in the frame
+      // (including the currently selected event), so don't append it again or it would be
+      // double-counted.
+      if(overlay != DebugOverlay::QuadOverdrawFrame)
+        events.push_back(eventId);
 
       if(!events.empty())
       {
@@ -2081,7 +2103,7 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
 
         GLuint curDepth = 0, depthType = 0;
 
-        if(overlay == DebugOverlay::QuadOverdrawPass)
+        if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
           ReplayLog(events[0], eReplay_WithoutDraw);
         else
           rs.ApplyState(m_pDriver);
@@ -2237,7 +2259,9 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
               RDCERR("Couldn't get location of overdrawImage");
           }
 
-          if(overlay == DebugOverlay::QuadOverdrawPass && overridedepth)
+          if((overlay == DebugOverlay::QuadOverdrawPass ||
+              overlay == DebugOverlay::QuadOverdrawFrame) &&
+             overridedepth)
             drv.CopyTex2DMSToArray(overridedepth, curDepth, outWidth, outHeight, depthSlices,
                                    depthSamples, fmt);
 
@@ -2263,7 +2287,7 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
             drv.glStencilMaskSeparate(eGL_BACK, (GLuint)stencilbmask);
           }
 
-          if(overlay == DebugOverlay::QuadOverdrawPass)
+          if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
           {
             m_pDriver->ReplayLog(0, events[i], eReplay_OnlyDraw);
 
@@ -2320,7 +2344,7 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, Debug
         drv.glDeleteTextures(2, quadtexs);
         drv.glDeleteTextures(1, &overridedepth);
 
-        if(overlay == DebugOverlay::QuadOverdrawPass)
+        if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
           ReplayLog(eventId, eReplay_WithoutDraw);
       }
     }

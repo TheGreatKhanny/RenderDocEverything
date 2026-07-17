@@ -2726,7 +2726,8 @@ void D3D12Replay::OverlayRendering::Init(WrappedID3D12Device *device, D3D12Debug
     pipeDesc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
     pipeDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipeDesc.NumRenderTargets = 1;
-    pipeDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    // the quad overdraw resolve writes the count into a single-channel R32_FLOAT overlay texture
+    pipeDesc.RTVFormats[0] = DXGI_FORMAT_R32_FLOAT;
     pipeDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
     pipeDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
     pipeDesc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
@@ -2819,9 +2820,9 @@ void D3D12Replay::OverlayRendering::Init(WrappedID3D12Device *device, D3D12Debug
         DepthResolvePipe[f][i] = NULL;
         pipeDesc.SampleDesc.Count = UINT(1 << i);
 
-        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS check = {};
-        check.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        check.SampleCount = pipeDesc.SampleDesc.Count;
+      D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS check = {};
+      check.Format = DXGI_FORMAT_R32_FLOAT;
+      check.SampleCount = pipeDesc.SampleDesc.Count;
         device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &check, sizeof(check));
 
         if(check.NumQualityLevels == 0)

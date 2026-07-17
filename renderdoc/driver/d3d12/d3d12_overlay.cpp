@@ -928,6 +928,14 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
   D3D12_RESOURCE_DESC resourceDesc = resource->GetDesc();
 
+  // for quad overdraw overlays only the R channel is used (the accumulated overdraw count), and
+  // float32 stores integer counts exactly up to 2^24, so use the single-channel R32_FLOAT format
+  // (1/4 the memory of RGBA16F). Other overlays store [0,1] RGBA colours so half-float RGBA is used.
+  DXGI_FORMAT overlayFmt = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+     overlay == DebugOverlay::QuadOverdrawFrame)
+    overlayFmt = DXGI_FORMAT_R32_FLOAT;
+
   D3D12_RESOURCE_DESC overlayTexDesc;
   overlayTexDesc.Alignment = 0;
   overlayTexDesc.DepthOrArraySize = resourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE3D
@@ -935,7 +943,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
                                         : 1;
   overlayTexDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
   overlayTexDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-  overlayTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  overlayTexDesc.Format = overlayFmt;
   overlayTexDesc.Height = resourceDesc.Height;
   overlayTexDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
   overlayTexDesc.MipLevels = resourceDesc.MipLevels;
@@ -1046,7 +1054,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
   D3D12_CPU_DESCRIPTOR_HANDLE rtv = GetDebugManager()->GetCPUHandle(OVERLAY_RTV);
   D3D12_RENDER_TARGET_VIEW_DESC rtDesc = {};
-  rtDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  rtDesc.Format = overlayFmt;
 
   ID3D12GraphicsCommandListX *list = m_pDevice->GetNewList();
   if(!list)
@@ -1841,7 +1849,8 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
     // restore back to normal
     m_pDevice->ReplayLog(0, eventId, eReplay_WithoutDraw);
   }
-  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+          overlay == DebugOverlay::QuadOverdrawFrame)
   {
     SCOPED_TIMER("Quad Overdraw");
 
@@ -1850,11 +1859,15 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
     if(overlay == DebugOverlay::QuadOverdrawDraw)
       events.clear();
 
-    events.push_back(eventId);
+    // for the whole-frame overlay, passEvents already contains every drawcall in the frame
+    // (including the currently selected event), so don't append it again or it would be
+    // double-counted.
+    if(overlay != DebugOverlay::QuadOverdrawFrame)
+      events.push_back(eventId);
 
     if(!events.empty())
     {
-      if(overlay == DebugOverlay::QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
       {
         list->Close();
         m_pDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
@@ -2016,7 +2029,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       SAFE_RELEASE(overrideDepth);
     }
 
-    if(overlay == DebugOverlay::QuadOverdrawPass)
+    if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
       m_pDevice->ReplayLog(0, eventId, eReplay_WithoutDraw);
   }
   else if(overlay == DebugOverlay::Depth || overlay == DebugOverlay::Stencil)

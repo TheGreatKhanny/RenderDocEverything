@@ -513,6 +513,7 @@ private:
     GLuint overlayProg;
     GLint overlayTexWidth = 0, overlayTexHeight = 0, overlayTexSamples = 0, overlayTexMips = 0,
           overlayTexSlices = 0;
+    GLenum overlayTexFormat = eGL_NONE;
 
     GLuint UBOs[3];
 

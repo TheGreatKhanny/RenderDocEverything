@@ -724,6 +724,7 @@ private:
     uint32_t MipLevels = 0, ArrayLayers = 0;
     uint32_t MultiViewMask = 0;
     VkSampleCountFlagBits Samples = VK_SAMPLE_COUNT_1_BIT;
+    VkFormat Format = VK_FORMAT_UNDEFINED;
     VkRenderPass NoDepthRP = VK_NULL_HANDLE;
 
     // the view and framebuffer must be recreated if the mip changes, even if the image doesn't

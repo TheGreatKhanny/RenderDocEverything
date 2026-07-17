@@ -132,6 +132,26 @@ float4 RENDERDOC_TexDisplayPS(v2f IN) : SV_Target0
 
       return ColorRamp[bucket];
     }
+    else if(HeatmapMode == HEATMAP_LOG)
+    {
+      // whole-frame overdraw: normalise the overdraw count with an adjustable contrast curve,
+      //   g = saturate(pow(value * HeatmapScale, HeatmapPower))
+      // then remap g through a 5-stop colour ramp (stops at 0, 0.25, 0.5, 0.75, 1) stored in
+      // ColorRamp[0..4]. Values below 1 are treated as empty (transparent).
+      if(col.x < 0.5f)
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+      float g = saturate(pow(max(col.x * HeatmapScale, 0.0f), HeatmapPower));
+
+      float t = g * 4.0f;
+      int idx = (int)floor(t);
+      idx = min(idx, 3);
+      float f = t - (float)idx;
+
+      float4 c = lerp(ColorRamp[idx], ColorRamp[idx + 1], f);
+
+      return float4(c.rgb, 1.0f);
+    }
     else if(HeatmapMode == HEATMAP_TRISIZE)
     {
       // uninitialised regions have alpha=0

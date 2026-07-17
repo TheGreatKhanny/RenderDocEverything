@@ -230,6 +230,7 @@ struct Analytics
     bool QuadOverdrawDraw = false;
     bool TriangleSizePass = false;
     bool TriangleSizeDraw = false;
+    bool QuadOverdrawFrame = false;
   } TextureOverlays;
 
   // If some particular API specific features are seen in a capture, as a simple yes/no. See

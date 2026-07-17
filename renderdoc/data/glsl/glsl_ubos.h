@@ -185,8 +185,10 @@ INST_NAME(str);
 BINDING(1) uniform HeatmapData
 {
   int HeatmapMode;
-  int DummyA;
-  int DummyB;
+  // scale and power used by the logarithmic/grayscale heatmap to adjust contrast:
+  //   grayscale = clamp(pow(value * HeatmapScale, HeatmapPower), 0, 1)
+  float HeatmapScale;
+  float HeatmapPower;
   int DummyC;
 
   // must match size of colorRamp on C++ side

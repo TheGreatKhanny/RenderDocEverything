@@ -678,6 +678,12 @@ bool GLReplay::RenderTextureInternal(TextureDisplay cfg, TexDisplayFlags flags)
     {
       heatmapData.HeatmapMode = HEATMAP_LINEAR;
     }
+    else if(cfg.overlay == DebugOverlay::QuadOverdrawFrame)
+    {
+      heatmapData.HeatmapMode = HEATMAP_LOG;
+      heatmapData.HeatmapScale = cfg.overlayContrastScale;
+      heatmapData.HeatmapPower = cfg.overlayContrastPower;
+    }
     else if(cfg.overlay == DebugOverlay::TriangleSizeDraw ||
             cfg.overlay == DebugOverlay::TriangleSizePass)
     {
@@ -690,6 +696,29 @@ bool GLReplay::RenderTextureInternal(TextureDisplay cfg, TexDisplayFlags flags)
 
       RDCCOMPILE_ASSERT(sizeof(heatmapData.ColorRamp) == sizeof(colorRamp),
                         "C++ color ramp array is not the same size as the shader array");
+
+      if(heatmapData.HeatmapMode == HEATMAP_LOG)
+      {
+        // 5-stop colour ramp for whole-frame overdraw: user-configured or default blue->red
+        const Vec4f defaultRamp[5] = {
+            Vec4f(0.0f, 0.0f, 1.0f, 1.0f), Vec4f(0.0f, 1.0f, 1.0f, 1.0f),
+            Vec4f(0.0f, 1.0f, 0.0f, 1.0f), Vec4f(1.0f, 1.0f, 0.0f, 1.0f),
+            Vec4f(1.0f, 0.0f, 0.0f, 1.0f),
+        };
+
+        for(int i = 0; i < 5; i++)
+        {
+          if(cfg.overlayRampColors[4].w > 0.0f)
+          {
+            const FloatVector &c = cfg.overlayRampColors[i];
+            heatmapData.ColorRamp[i] = Vec4f(c.x, c.y, c.z, c.w);
+          }
+          else
+          {
+            heatmapData.ColorRamp[i] = defaultRamp[i];
+          }
+        }
+      }
     }
   }
 

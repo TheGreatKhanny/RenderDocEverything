@@ -25,16 +25,37 @@
 #include "TextureViewer.h"
 #include <float.h>
 #include <math.h>
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <set>
+#include <vector>
+#include <QApplication>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QDialog>
+#include <QDesktopServices>
+#include <QDir>
+#include <QDoubleValidator>
+#include <QFile>
+#include <QFileDialog>
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
+#include <QImage>
+#include <QIntValidator>
 #include <QItemDelegate>
 #include <QJsonDocument>
 #include <QMenu>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPointer>
+#include <QPushButton>
+#include <QRect>
+#include <QRubberBand>
 #include <QStyledItemDelegate>
+#include <QToolButton>
+#include <QUrl>
+#include <QVBoxLayout>
 #include "Code/QRDUtils.h"
 #include "Code/Resources.h"
 #include "Dialogs/TextureSaveDialog.h"
@@ -657,7 +678,83 @@ TextureViewer::TextureViewer(ICaptureContext &ctx, QWidget *parent)
                          tr("Viewport/Scissor Region"), tr("NaN/INF/-ve Display"),
                          tr("Histogram Clipping"), tr("Clear Before Pass"), tr("Clear Before Draw"),
                          tr("Quad Overdraw (Pass)"), tr("Quad Overdraw (Draw)"),
-                         tr("Triangle Size (Pass)"), tr("Triangle Size (Draw)")});
+                         tr("Triangle Size (Pass)"), tr("Triangle Size (Draw)"),
+                         tr("Quad Overdraw (Frame)")});
+
+  // EID range inputs are only meaningful for the whole-frame overdraw overlay. They restrict the
+  // accumulation to draws within [start, end]. Hidden until that overlay is selected.
+  ui->eidRangeStart->setValidator(new QIntValidator(0, 0x7fffffff, this));
+  ui->eidRangeEnd->setValidator(new QIntValidator(0, 0x7fffffff, this));
+  ui->eidRangeStart->setPlaceholderText(tr("start"));
+  ui->eidRangeEnd->setPlaceholderText(tr("end"));
+
+  QObject::connect(ui->eidRangeStart, &QLineEdit::editingFinished, this,
+                   &TextureViewer::eidRange_changed);
+  QObject::connect(ui->eidRangeEnd, &QLineEdit::editingFinished, this,
+                   &TextureViewer::eidRange_changed);
+
+  ui->eidRangeLabel->setVisible(false);
+  ui->eidRangeStart->setVisible(false);
+  ui->eidRangeDash->setVisible(false);
+  ui->eidRangeEnd->setVisible(false);
+
+  // contrast controls for the grayscale whole-frame overdraw overlay:
+  //   grayscale = pow(overdraw * Add, Pow)
+  m_TexDisplay.overlayContrastScale = 0.001f;
+  m_TexDisplay.overlayContrastPower = 1.0f;
+
+  QDoubleValidator *scaleValidator = new QDoubleValidator(0.0, 1000000.0, 7, this);
+  scaleValidator->setNotation(QDoubleValidator::StandardNotation);
+  scaleValidator->setLocale(QLocale::c());
+  QDoubleValidator *powerValidator = new QDoubleValidator(0.0, 1000.0, 4, this);
+  powerValidator->setNotation(QDoubleValidator::StandardNotation);
+  powerValidator->setLocale(QLocale::c());
+  ui->overdrawScale->setValidator(scaleValidator);
+  ui->overdrawPower->setValidator(powerValidator);
+  ui->overdrawScale->setText(lit("0.001"));
+  ui->overdrawPower->setText(lit("1.0"));
+
+  QObject::connect(ui->overdrawScale, &QLineEdit::editingFinished, this,
+                   &TextureViewer::overdrawContrast_changed);
+  QObject::connect(ui->overdrawPower, &QLineEdit::editingFinished, this,
+                   &TextureViewer::overdrawContrast_changed);
+
+  ui->overdrawScaleLabel->setVisible(false);
+  ui->overdrawScale->setVisible(false);
+  ui->overdrawPowerLabel->setVisible(false);
+  ui->overdrawPower->setVisible(false);
+
+  // 5-stop colour ramp for the whole-frame overdraw overlay, editable via colour buttons.
+  // default blue -> cyan -> green -> yellow -> red.
+  {
+    QColor defaultRamp[5] = {QColor(0, 0, 255), QColor(0, 255, 255), QColor(0, 255, 0),
+                             QColor(255, 255, 0), QColor(255, 0, 0)};
+    QToolButton *rampButtons[5] = {ui->rampColor0, ui->rampColor1, ui->rampColor2, ui->rampColor3,
+                                   ui->rampColor4};
+
+    for(int i = 0; i < 5; i++)
+    {
+      m_OverdrawRampColors[i] = defaultRamp[i];
+      m_TexDisplay.overlayRampColors[i] = FloatVector(defaultRamp[i].redF(), defaultRamp[i].greenF(),
+                                                      defaultRamp[i].blueF(), 1.0f);
+      setRampButtonColor(rampButtons[i], defaultRamp[i]);
+
+      QObject::connect(rampButtons[i], &QToolButton::clicked, this,
+                       [this, i]() { rampColor_clicked(i); });
+
+      rampButtons[i]->setVisible(false);
+    }
+    ui->overdrawRampLabel->setVisible(false);
+  }
+
+  ui->avgOverdrawBtn->setVisible(false);
+  ui->avgOverdrawLabel->setVisible(false);
+  ui->overdrawReportBtn->setVisible(false);
+  ui->selectRegionBtn->setVisible(false);
+  ui->overdrawStagesLabel->setVisible(false);
+  ui->overdrawStages->setVisible(false);
+  ui->overdrawStages->setValidator(new QIntValidator(1, 50, this));
+  ui->overdrawStages->setText(lit("5"));
 
   ui->textureListFilter->addItems({QString(), tr("Textures"), tr("Render Targets")});
 
@@ -683,6 +780,8 @@ TextureViewer::TextureViewer(ICaptureContext &ctx, QWidget *parent)
   SetupTextureTabs();
 
   QObject::connect(ui->render, &CustomPaintWidget::clicked, this, &TextureViewer::render_mouseClick);
+  QObject::connect(ui->render, &CustomPaintWidget::unclicked, this,
+                   &TextureViewer::render_mouseUnclick);
   QObject::connect(ui->render, &CustomPaintWidget::mouseMove, this, &TextureViewer::render_mouseMove);
   QObject::connect(ui->render, &CustomPaintWidget::mouseWheel, this,
                    &TextureViewer::render_mouseWheel);
@@ -767,6 +866,7 @@ void TextureViewer::RT_FetchCurrentPixel(IReplayController *r, uint32_t x, uint3
 
   if(m_TexDisplay.overlay == DebugOverlay::QuadOverdrawDraw ||
      m_TexDisplay.overlay == DebugOverlay::QuadOverdrawPass ||
+     m_TexDisplay.overlay == DebugOverlay::QuadOverdrawFrame ||
      m_TexDisplay.overlay == DebugOverlay::TriangleSizeDraw ||
      m_TexDisplay.overlay == DebugOverlay::TriangleSizePass)
   {
@@ -958,6 +1058,7 @@ void TextureViewer::UI_UpdateStatusText()
 
   if(m_TexDisplay.overlay == DebugOverlay::QuadOverdrawPass ||
      m_TexDisplay.overlay == DebugOverlay::QuadOverdrawDraw ||
+     m_TexDisplay.overlay == DebugOverlay::QuadOverdrawFrame ||
      m_TexDisplay.overlay == DebugOverlay::TriangleSizePass ||
      m_TexDisplay.overlay == DebugOverlay::TriangleSizeDraw)
   {
@@ -2649,6 +2750,15 @@ void TextureViewer::render_mouseWheel(QWheelEvent *e)
 
 void TextureViewer::render_mouseMove(QMouseEvent *e)
 {
+  if(m_SelectingRegion && (e->buttons() & Qt::LeftButton))
+  {
+    if(m_StatRubberBand)
+      m_StatRubberBand->setGeometry(
+          QRect(ui->render->mapToGlobal(m_RegionStartPos), ui->render->mapToGlobal(e->pos()))
+              .normalized());
+    return;
+  }
+
   if(m_Output == NULL)
     return;
 
@@ -2709,6 +2819,16 @@ void TextureViewer::render_mouseClick(QMouseEvent *e)
 {
   ui->render->setFocus();
 
+  if(m_SelectingRegion && (e->buttons() & Qt::LeftButton))
+  {
+    m_RegionStartPos = e->pos();
+    if(m_StatRubberBand == NULL)
+      m_StatRubberBand = new QRubberBand(QRubberBand::Rectangle, NULL);
+    m_StatRubberBand->setGeometry(QRect(ui->render->mapToGlobal(m_RegionStartPos), QSize()));
+    m_StatRubberBand->show();
+    return;
+  }
+
   if(e->buttons() & Qt::RightButton)
     render_mouseMove(e);
 
@@ -2719,6 +2839,66 @@ void TextureViewer::render_mouseClick(QMouseEvent *e)
 
     ui->render->setCursor(QCursor(Qt::SizeAllCursor));
   }
+}
+
+void TextureViewer::render_mouseUnclick(QMouseEvent *e)
+{
+  if(!m_SelectingRegion)
+    return;
+
+  m_SelectingRegion = false;
+  ui->selectRegionBtn->setChecked(false);
+  ui->render->unsetCursor();
+
+  if(m_StatRubberBand)
+    m_StatRubberBand->hide();
+
+  TextureDescription *tex = GetCurrentTexture();
+  if(tex == NULL)
+    return;
+
+  QRect widgetRect = QRect(m_RegionStartPos, e->pos()).normalized();
+
+  // a tiny selection resets the region to the whole image
+  if(widgetRect.width() < 4 || widgetRect.height() < 4)
+  {
+    m_StatRegionNorm = QRectF();
+    ui->avgOverdrawLabel->setText(tr("region: full"));
+    return;
+  }
+
+  auto toTexel = [this](QPoint p) -> QPointF {
+    float tx = (float(p.x() * ui->render->devicePixelRatioF()) - m_TexDisplay.xOffset) /
+               m_TexDisplay.scale;
+    float ty = (float(p.y() * ui->render->devicePixelRatioF()) - m_TexDisplay.yOffset) /
+               m_TexDisplay.scale;
+    return QPointF(tx, ty);
+  };
+
+  QPointF a = toTexel(widgetRect.topLeft());
+  QPointF b = toTexel(widgetRect.bottomRight());
+
+  float x0 = qBound(0.0f, float(qMin(a.x(), b.x()) / tex->width), 1.0f);
+  float x1 = qBound(0.0f, float(qMax(a.x(), b.x()) / tex->width), 1.0f);
+  float y0 = qBound(0.0f, float(qMin(a.y(), b.y()) / tex->height), 1.0f);
+  float y1 = qBound(0.0f, float(qMax(a.y(), b.y()) / tex->height), 1.0f);
+
+  m_StatRegionNorm = QRectF(QPointF(x0, y0), QPointF(x1, y1));
+
+  ui->avgOverdrawLabel->setText(tr("region: [%1,%2]-[%3,%4]")
+                                    .arg(int(x0 * tex->width))
+                                    .arg(int(y0 * tex->height))
+                                    .arg(int(x1 * tex->width))
+                                    .arg(int(y1 * tex->height)));
+}
+
+void TextureViewer::on_selectRegionBtn_clicked()
+{
+  m_SelectingRegion = ui->selectRegionBtn->isChecked();
+  if(m_SelectingRegion)
+    ui->render->setCursor(QCursor(Qt::CrossCursor));
+  else
+    ui->render->unsetCursor();
 }
 
 void TextureViewer::render_resize(QResizeEvent *e)
@@ -2976,6 +3156,28 @@ void TextureViewer::Reset()
       backCol.isValid() ? FloatVector(backCol.redF(), backCol.greenF(), backCol.blueF(), 1.0f)
                         : FloatVector();
 
+  // the memset above wipes the whole-frame overdraw overlay settings - restore them (from the
+  // current UI state) so the overlay works immediately without the user having to change a value
+  // first.
+  {
+    bool ok = false;
+    float s = ui->overdrawScale->text().toFloat(&ok);
+    if(!ok || s <= 0.0f)
+      s = 0.001f;
+    ok = false;
+    float p = ui->overdrawPower->text().toFloat(&ok);
+    if(!ok || p <= 0.0f)
+      p = 1.0f;
+
+    m_TexDisplay.overlayContrastScale = s;
+    m_TexDisplay.overlayContrastPower = p;
+
+    for(int i = 0; i < 5; i++)
+      m_TexDisplay.overlayRampColors[i] =
+          FloatVector(m_OverdrawRampColors[i].redF(), m_OverdrawRampColors[i].greenF(),
+                      m_OverdrawRampColors[i].blueF(), 1.0f);
+  }
+
   m_Output = NULL;
 
   m_TextureSettings.clear();
@@ -3137,15 +3339,19 @@ void TextureViewer::OnEventChanged(uint32_t eventId)
     font.setItalic(true);
     ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawDraw, tr("Overdraw (N/A on MSAA)"));
     ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawPass, tr("Overdraw (N/A on MSAA)"));
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawFrame, tr("Overdraw (N/A on MSAA)"));
     ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawDraw, font, Qt::FontRole);
     ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawPass, font, Qt::FontRole);
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawFrame, font, Qt::FontRole);
   }
   else
   {
     ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawDraw, tr("Quad Overdraw (Draw)"));
     ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawPass, tr("Quad Overdraw (Pass)"));
+    ui->overlay->setItemText((int)DebugOverlay::QuadOverdrawFrame, tr("Quad Overdraw (Frame)"));
     ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawDraw, font, Qt::FontRole);
     ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawPass, font, Qt::FontRole);
+    ui->overlay->setItemData((int)DebugOverlay::QuadOverdrawFrame, font, Qt::FontRole);
   }
 
   int count = 7;
@@ -3532,6 +3738,31 @@ void TextureViewer::on_overlay_currentIndexChanged(int index)
   if(ui->overlay->currentIndex() > 0)
     m_TexDisplay.overlay = (DebugOverlay)ui->overlay->currentIndex();
 
+  // the EID range inputs only apply to the whole-frame overdraw overlay
+  bool frameOverdraw = (m_TexDisplay.overlay == DebugOverlay::QuadOverdrawFrame);
+  ui->eidRangeLabel->setVisible(frameOverdraw);
+  ui->eidRangeStart->setVisible(frameOverdraw);
+  ui->eidRangeDash->setVisible(frameOverdraw);
+  ui->eidRangeEnd->setVisible(frameOverdraw);
+  ui->overdrawScaleLabel->setVisible(frameOverdraw);
+  ui->overdrawScale->setVisible(frameOverdraw);
+  ui->overdrawPowerLabel->setVisible(frameOverdraw);
+  ui->overdrawPower->setVisible(frameOverdraw);
+  ui->overdrawRampLabel->setVisible(frameOverdraw);
+  ui->rampColor0->setVisible(frameOverdraw);
+  ui->rampColor1->setVisible(frameOverdraw);
+  ui->rampColor2->setVisible(frameOverdraw);
+  ui->rampColor3->setVisible(frameOverdraw);
+  ui->rampColor4->setVisible(frameOverdraw);
+  ui->avgOverdrawBtn->setVisible(frameOverdraw);
+  ui->avgOverdrawLabel->setVisible(frameOverdraw);
+  ui->overdrawReportBtn->setVisible(frameOverdraw);
+  ui->selectRegionBtn->setVisible(frameOverdraw);
+  ui->overdrawStagesLabel->setVisible(frameOverdraw);
+  ui->overdrawStages->setVisible(frameOverdraw);
+  if(!frameOverdraw)
+    ui->avgOverdrawLabel->setText(QString());
+
 #define ANALYTICS_OVERLAY(name) \
   case DebugOverlay::name: ANALYTIC_SET(TextureOverlays.name, true); break;
 
@@ -3551,6 +3782,7 @@ void TextureViewer::on_overlay_currentIndexChanged(int index)
     ANALYTICS_OVERLAY(QuadOverdrawDraw);
     ANALYTICS_OVERLAY(TriangleSizePass);
     ANALYTICS_OVERLAY(TriangleSizeDraw);
+    ANALYTICS_OVERLAY(QuadOverdrawFrame);
     default: break;
   }
 
@@ -3561,6 +3793,801 @@ void TextureViewer::on_overlay_currentIndexChanged(int index)
   {
     INVOKE_MEMFN(RT_PickPixelsAndUpdate);
   }
+}
+
+void TextureViewer::eidRange_changed()
+{
+  bool ok = false;
+
+  uint32_t start = ui->eidRangeStart->text().toUInt(&ok);
+  if(!ok)
+    start = 0;
+
+  ok = false;
+  uint32_t end = ui->eidRangeEnd->text().toUInt(&ok);
+  if(!ok)
+    end = 0;
+
+  if(start == m_TexDisplay.overlayStartEID && end == m_TexDisplay.overlayEndEID)
+    return;
+
+  m_TexDisplay.overlayStartEID = start;
+  m_TexDisplay.overlayEndEID = end;
+
+  INVOKE_MEMFN(RT_UpdateAndDisplay);
+  if(m_Output != NULL && m_PickedPoint.x() >= 0 && m_PickedPoint.y() >= 0)
+  {
+    INVOKE_MEMFN(RT_PickPixelsAndUpdate);
+  }
+}
+
+void TextureViewer::overdrawContrast_changed()
+{
+  bool ok = false;
+
+  float scale = (float)ui->overdrawScale->text().toDouble(&ok);
+  if(!ok || scale <= 0.0f)
+    scale = 0.001f;
+
+  ok = false;
+  float power = (float)ui->overdrawPower->text().toDouble(&ok);
+  if(!ok || power <= 0.0f)
+    power = 1.0f;
+
+  if(scale == m_TexDisplay.overlayContrastScale && power == m_TexDisplay.overlayContrastPower)
+    return;
+
+  m_TexDisplay.overlayContrastScale = scale;
+  m_TexDisplay.overlayContrastPower = power;
+
+  INVOKE_MEMFN(RT_UpdateAndDisplay);
+  if(m_Output != NULL && m_PickedPoint.x() >= 0 && m_PickedPoint.y() >= 0)
+  {
+    INVOKE_MEMFN(RT_PickPixelsAndUpdate);
+  }
+}
+
+void TextureViewer::setRampButtonColor(QToolButton *button, QColor col)
+{
+  button->setStyleSheet(lit("QToolButton { background-color: rgb(%1,%2,%3); "
+                            "border: 1px solid palette(shadow); min-width: 18px; }")
+                            .arg(col.red())
+                            .arg(col.green())
+                            .arg(col.blue()));
+}
+
+void TextureViewer::rampColor_clicked(int index)
+{
+  if(index < 0 || index >= 5)
+    return;
+
+  QColor col = QColorDialog::getColor(m_OverdrawRampColors[index], this, tr("Choose ramp colour"));
+
+  if(!col.isValid())
+    return;
+
+  col = col.toRgb();
+  m_OverdrawRampColors[index] = col;
+
+  QToolButton *rampButtons[5] = {ui->rampColor0, ui->rampColor1, ui->rampColor2, ui->rampColor3,
+                                 ui->rampColor4};
+  setRampButtonColor(rampButtons[index], col);
+
+  m_TexDisplay.overlayRampColors[index] = FloatVector(col.redF(), col.greenF(), col.blueF(), 1.0f);
+
+  INVOKE_MEMFN(RT_UpdateAndDisplay);
+}
+
+// decode an IEEE 754 half-float (used when the overlay texture is stored as RGBA16F on non-D3D11
+// backends).
+static float TexViewerHalfToFloat(uint16_t h)
+{
+  uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+  uint32_t exp = (h & 0x7C00u) >> 10;
+  uint32_t mant = (h & 0x03FFu);
+  uint32_t f = 0;
+
+  if(exp == 0)
+  {
+    if(mant != 0)
+    {
+      exp = 1;
+      while((mant & 0x0400u) == 0)
+      {
+        mant <<= 1;
+        exp--;
+      }
+      mant &= 0x03FFu;
+      f = sign | ((exp + 112u) << 23) | (mant << 13);
+    }
+    else
+    {
+      f = sign;
+    }
+  }
+  else if(exp == 0x1F)
+  {
+    f = sign | 0x7F800000u | (mant << 13);
+  }
+  else
+  {
+    f = sign | ((exp + 112u) << 23) | (mant << 13);
+  }
+
+  float out;
+  memcpy(&out, &f, sizeof(out));
+  return out;
+}
+
+void TextureViewer::on_avgOverdrawBtn_clicked()
+{
+  if(m_Output == NULL || GetCurrentTexture() == NULL)
+    return;
+
+  ui->avgOverdrawLabel->setText(tr("computing..."));
+
+  INVOKE_MEMFN(RT_ComputeAvgOverdraw);
+}
+
+// read back the overlay texture into a per-pixel array of overdraw counts (R channel). Returns
+// false if there's no overlay to read.
+bool TextureViewer::readOverlayCounts(IReplayController *r, rdcarray<float> &counts, uint32_t &w,
+                                      uint32_t &h)
+{
+  counts.clear();
+  w = h = 0;
+
+  if(m_Output == NULL)
+    return false;
+
+  ResourceId overlayId = m_Output->GetDebugOverlayTexID();
+  TextureDescription *tex = GetCurrentTexture();
+
+  if(overlayId == ResourceId() || tex == NULL)
+    return false;
+
+  Subresource sub = m_TexDisplay.subresource;
+
+  uint32_t tw = qMax(1U, tex->width >> (int)sub.mip);
+  uint32_t th = qMax(1U, tex->height >> (int)sub.mip);
+  uint64_t numPixels = (uint64_t)tw * (uint64_t)th;
+
+  bytebuf overlayData = r->GetTextureData(overlayId, sub);
+
+  if(numPixels == 0 || overlayData.empty() || overlayData.size() < numPixels)
+    return false;
+
+  size_t bpp = (size_t)(overlayData.size() / numPixels);
+
+  // the R channel holds the overdraw count. Half-float components are 2 bytes (bpp 2 or 8), 32-bit
+  // float components 4 bytes (bpp 4 or 16).
+  if(bpp != 2 && bpp != 4 && bpp != 8 && bpp != 16)
+    return false;
+
+  bool isHalf = (bpp == 2 || bpp == 8);
+  const byte *ptr = overlayData.data();
+
+  counts.resize((size_t)numPixels);
+  for(uint64_t i = 0; i < numPixels; i++)
+    counts[(size_t)i] = isHalf ? TexViewerHalfToFloat(*(const uint16_t *)(ptr + i * bpp))
+                               : *(const float *)(ptr + i * bpp);
+
+  w = tw;
+  h = th;
+  return true;
+}
+
+bool TextureViewer::readOverlayOverdraw(IReplayController *r, double &sum, uint64_t &covered,
+                                        uint64_t &numPixels)
+{
+  sum = 0.0;
+  covered = 0;
+  numPixels = 0;
+
+  rdcarray<float> counts;
+  uint32_t w = 0, h = 0;
+  if(!readOverlayCounts(r, counts, w, h))
+    return false;
+
+  numPixels = counts.size();
+  for(float v : counts)
+  {
+    sum += v;
+    if(v >= 0.5f)
+      covered++;
+  }
+
+  return true;
+}
+
+// compute overdraw statistics over the current selection region (or the whole image if none is set)
+void TextureViewer::computeOverdrawStats(const rdcarray<float> &counts, uint32_t w, uint32_t h,
+                                         double &minOD, double &maxOD, double &sum,
+                                         uint64_t &covered, uint64_t &total)
+{
+  minOD = maxOD = sum = 0.0;
+  covered = 0;
+  total = 0;
+
+  if(w == 0 || h == 0 || counts.size() < (size_t)w * h)
+    return;
+
+  QRectF rg = (m_StatRegionNorm.isNull() || m_StatRegionNorm.isEmpty()) ? QRectF(0.0, 0.0, 1.0, 1.0)
+                                                                        : m_StatRegionNorm;
+
+  int x0 = qBound(0, (int)floor(rg.left() * w), (int)w);
+  int x1 = qBound(0, (int)ceil(rg.right() * w), (int)w);
+  int y0 = qBound(0, (int)floor(rg.top() * h), (int)h);
+  int y1 = qBound(0, (int)ceil(rg.bottom() * h), (int)h);
+
+  if(x1 <= x0 || y1 <= y0)
+  {
+    x0 = 0;
+    y0 = 0;
+    x1 = (int)w;
+    y1 = (int)h;
+  }
+
+  float fmn = FLT_MAX, fmx = 0.0f;
+  for(int y = y0; y < y1; y++)
+  {
+    for(int x = x0; x < x1; x++)
+    {
+      total++;
+      float v = counts[(size_t)y * w + x];
+      sum += v;
+      if(v >= 0.5f)
+      {
+        covered++;
+        fmn = qMin(fmn, v);
+        fmx = qMax(fmx, v);
+      }
+    }
+  }
+
+  if(covered > 0)
+  {
+    minOD = fmn;
+    maxOD = fmx;
+  }
+}
+
+void TextureViewer::RT_ComputeAvgOverdraw(IReplayController *r)
+{
+  rdcarray<float> counts;
+  uint32_t w = 0, h = 0;
+  if(!readOverlayCounts(r, counts, w, h))
+  {
+    GUIInvoke::call(this, [this]() { ui->avgOverdrawLabel->setText(tr("n/a")); });
+    return;
+  }
+
+  double sum = 0.0, minOD = 0.0, maxOD = 0.0;
+  uint64_t covered = 0, total = 0;
+  computeOverdrawStats(counts, w, h, minOD, maxOD, sum, covered, total);
+
+  double avgAll = total > 0 ? sum / (double)total : 0.0;
+  double avgCovered = covered > 0 ? sum / (double)covered : 0.0;
+
+  GUIInvoke::call(this, [this, avgAll, avgCovered, sum, covered, total, minOD, maxOD]() {
+    ui->avgOverdrawLabel->setText(
+        tr("avg %1 (covered %2)").arg(avgAll, 0, 'f', 2).arg(avgCovered, 0, 'f', 2));
+    ui->avgOverdrawLabel->setToolTip(tr("Total overdraw: %1\n"
+                                        "Average over all %2 region pixels: %3\n"
+                                        "Average over %4 covered (overdraw>=1) pixels: %5\n"
+                                        "Min / Max single-pixel overdraw: %6 / %7")
+                                         .arg(sum, 0, 'f', 0)
+                                         .arg(total)
+                                         .arg(avgAll, 0, 'f', 4)
+                                         .arg(covered)
+                                         .arg(avgCovered, 0, 'f', 4)
+                                         .arg(minOD, 0, 'f', 0)
+                                         .arg(maxOD, 0, 'f', 0));
+  });
+}
+
+void TextureViewer::on_overdrawReportBtn_clicked()
+{
+  if(m_Output == NULL || GetCurrentTexture() == NULL)
+    return;
+
+  QString dir = RDDialog::getExistingDirectory(this, tr("Choose an empty folder for the report"));
+
+  if(dir.isEmpty())
+    return;
+
+  m_ReportDir = dir;
+
+  bool ok = false;
+  int stages = ui->overdrawStages->text().toInt(&ok);
+  m_ReportStages = (ok && stages >= 1) ? qMin(stages, 50) : 5;
+
+  ui->avgOverdrawLabel->setText(tr("generating report..."));
+
+  INVOKE_MEMFN(RT_GenerateOverdrawReport);
+}
+
+// count instruction-like lines in a shader disassembly (rough complexity metric)
+static int CountDisasmInstructions(const rdcstr &disasm)
+{
+  QString s = QString(disasm);
+  QStringList lines = s.split(QLatin1Char('\n'));
+  int n = 0;
+  for(const QString &l : lines)
+  {
+    QString t = l.trimmed();
+    if(t.isEmpty())
+      continue;
+    if(t.startsWith(lit("//")) || t.startsWith(lit(";")) || t.startsWith(lit("#")))
+      continue;
+    if(t.endsWith(QLatin1Char(':')))    // label
+      continue;
+    n++;
+  }
+  return n;
+}
+
+void TextureViewer::RT_GenerateOverdrawReport(IReplayController *r)
+{
+  struct TexRow
+  {
+    ResourceId id;
+    QString file;
+    uint32_t w, h;
+    QString fmt;
+    uint64_t bytes;
+    int usedDraws;
+  };
+  struct PSRow
+  {
+    ResourceId id;
+    int instr, tex, samp, cb, in, out;
+  };
+  struct StageRow
+  {
+    int idx;
+    uint32_t eidStart, eidEnd;
+    int draws;
+    double minOD, maxOD, avgOD;
+    QString overdrawFile, outputFile;
+  };
+
+  // ramp settings snapshot for CPU-side overdraw rendering (mirrors the display shader)
+  float rampScale = m_TexDisplay.overlayContrastScale;
+  float rampPower = m_TexDisplay.overlayContrastPower;
+  FloatVector rampCols[5];
+  for(int i = 0; i < 5; i++)
+    rampCols[i] = m_TexDisplay.overlayRampColors[i];
+
+  auto saveOverdrawPng = [&](const rdcarray<float> &c, uint32_t w, uint32_t h,
+                             const QString &path) -> bool {
+    if(w == 0 || h == 0 || c.size() < (size_t)w * h)
+      return false;
+    QImage img((int)w, (int)h, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    for(uint32_t y = 0; y < h; y++)
+    {
+      QRgb *line = (QRgb *)img.scanLine((int)y);
+      for(uint32_t x = 0; x < w; x++)
+      {
+        float cc = c[(size_t)y * w + x];
+        if(cc < 0.5f)
+          continue;
+        float g = qBound(0.0f, powf(qMax(cc * rampScale, 0.0f), rampPower), 1.0f);
+        float t = g * 4.0f;
+        int idx = qBound(0, (int)floorf(t), 3);
+        float f = t - (float)idx;
+        float rr = rampCols[idx].x + (rampCols[idx + 1].x - rampCols[idx].x) * f;
+        float gg = rampCols[idx].y + (rampCols[idx + 1].y - rampCols[idx].y) * f;
+        float bb = rampCols[idx].z + (rampCols[idx + 1].z - rampCols[idx].z) * f;
+        line[x] = qRgba(qBound(0, int(rr * 255.0f + 0.5f), 255),
+                        qBound(0, int(gg * 255.0f + 0.5f), 255),
+                        qBound(0, int(bb * 255.0f + 0.5f), 255), 255);
+      }
+    }
+    return img.save(path);
+  };
+
+  // 1. read overdraw counts for the current EID range (before we move the event)
+  rdcarray<float> counts;
+  uint32_t ow = 0, oh = 0;
+  bool haveOverdraw = readOverlayCounts(r, counts, ow, oh);
+
+  double sum = 0.0, minOD = 0.0, maxOD = 0.0;
+  uint64_t covered = 0, numPixels = 0;
+  computeOverdrawStats(counts, ow, oh, minOD, maxOD, sum, covered, numPixels);
+
+  // describe the stat region for the report
+  QString regionDesc;
+  if(m_StatRegionNorm.isNull() || m_StatRegionNorm.isEmpty())
+    regionDesc = tr("full image");
+  else
+    regionDesc = tr("[%1,%2] - [%3,%4]")
+                     .arg(int(m_StatRegionNorm.left() * ow))
+                     .arg(int(m_StatRegionNorm.top() * oh))
+                     .arg(int(m_StatRegionNorm.right() * ow))
+                     .arg(int(m_StatRegionNorm.bottom() * oh));
+
+  uint32_t start = m_TexDisplay.overlayStartEID;
+  uint32_t end = m_TexDisplay.overlayEndEID;
+  bool wholeFrame = (end == 0);
+
+  // 2. gather drawcalls in range
+  rdcarray<uint32_t> draws;
+  {
+    std::function<void(const rdcarray<ActionDescription> &)> gather =
+        [&draws, &gather, wholeFrame, start, end](const rdcarray<ActionDescription> &acts) {
+          for(const ActionDescription &a : acts)
+          {
+            if((a.flags & ActionFlags::Drawcall) &&
+               (wholeFrame || (a.eventId >= start && a.eventId <= end)))
+              draws.push_back(a.eventId);
+            gather(a.children);
+          }
+        };
+    gather(m_Ctx.CurRootActions());
+  }
+
+  // 3. per-draw: gather unique pixel shaders (with complexity) and unique textures (with use counts)
+  std::map<ResourceId, PSRow> psStats;
+  std::map<ResourceId, int> texUseDraws;
+  std::set<ResourceId> textures;
+
+  const ShaderStage stages[] = {ShaderStage::Vertex, ShaderStage::Hull, ShaderStage::Domain,
+                                ShaderStage::Geometry, ShaderStage::Pixel};
+
+  rdcarray<rdcstr> disasmTargets = r->GetDisassemblyTargets(false);
+  rdcstr disasmTarget = disasmTargets.empty() ? rdcstr() : disasmTargets[0];
+
+  uint32_t origEID = m_Ctx.CurEvent();
+
+  for(uint32_t eid : draws)
+  {
+    r->SetFrameEvent(eid, false);
+
+    const PipeState &pipe = r->GetPipelineState();
+
+    ResourceId ps = pipe.GetShader(ShaderStage::Pixel);
+    if(ps != ResourceId() && psStats.find(ps) == psStats.end())
+    {
+      const ShaderReflection *refl = pipe.GetShaderReflection(ShaderStage::Pixel);
+      PSRow row = {ps, 0, 0, 0, 0, 0, 0};
+      if(refl)
+      {
+        ResourceId pipeline = pipe.GetGraphicsPipelineObject();
+        if(!disasmTarget.empty())
+          row.instr = CountDisasmInstructions(r->DisassembleShader(pipeline, refl, disasmTarget));
+        row.tex = (int)refl->readOnlyResources.size();
+        row.samp = (int)refl->samplers.size();
+        row.cb = (int)refl->constantBlocks.size();
+        row.in = (int)refl->inputSignature.size();
+        row.out = (int)refl->outputSignature.size();
+      }
+      psStats[ps] = row;
+    }
+
+    std::set<ResourceId> drawTex;
+    for(ShaderStage s : stages)
+    {
+      rdcarray<UsedDescriptor> ro = pipe.GetReadOnlyResources(s, true);
+      for(const UsedDescriptor &d : ro)
+      {
+        ResourceId res = d.descriptor.resource;
+        if(res != ResourceId() && m_Ctx.GetTexture(res) != NULL)
+        {
+          textures.insert(res);
+          drawTex.insert(res);
+        }
+      }
+    }
+    for(ResourceId t : drawTex)
+      texUseDraws[t]++;
+  }
+
+  r->SetFrameEvent(origEID, true);
+
+  // 4. save the overall overdraw ramp PNG (CPU render mirroring the display shader)
+  QString overdrawFile;
+  if(haveOverdraw && saveOverdrawPng(counts, ow, oh, m_ReportDir + lit("/overdraw.png")))
+    overdrawFile = lit("overdraw.png");
+
+  // 5. save the raw output PNG (the viewed render target)
+  QString outputFile;
+  {
+    TextureDescription *tex = GetCurrentTexture();
+    if(tex)
+    {
+      TextureSave ts;
+      ts.resourceId = tex->resourceId;
+      ts.destType = FileType::PNG;
+      ts.mip = (int)m_TexDisplay.subresource.mip;
+      ts.slice.sliceIndex = (int)m_TexDisplay.subresource.slice;
+      ts.comp.blackPoint = 0.0f;
+      ts.comp.whitePoint = 1.0f;
+      ts.alpha = AlphaMapping::Preserve;
+      if(r->SaveTexture(ts, m_ReportDir + lit("/output.png")).OK())
+        outputFile = lit("output.png");
+    }
+  }
+
+  // 6. save each unique texture as PNG and gather metadata
+  std::vector<TexRow> texRows;
+  uint64_t totalTexBytes = 0;
+  int texIndex = 0;
+  for(ResourceId t : textures)
+  {
+    TextureDescription *td = m_Ctx.GetTexture(t);
+    if(td == NULL)
+      continue;
+
+    TexRow row;
+    row.id = t;
+    row.w = td->width;
+    row.h = td->height;
+    row.fmt = QString::fromUtf8(td->format.Name().c_str());
+    row.bytes = td->byteSize;
+    row.usedDraws = texUseDraws.count(t) ? texUseDraws[t] : 0;
+
+    QString fname = QString(lit("tex_%1.png")).arg(texIndex);
+    TextureSave ts;
+    ts.resourceId = t;
+    ts.destType = FileType::PNG;
+    ts.mip = 0;
+    ts.slice.sliceIndex = 0;
+    ts.comp.blackPoint = 0.0f;
+    ts.comp.whitePoint = 1.0f;
+    ts.alpha = AlphaMapping::Preserve;
+    if(r->SaveTexture(ts, m_ReportDir + lit("/") + fname).OK())
+      row.file = fname;
+
+    totalTexBytes += td->byteSize;
+    texRows.push_back(row);
+    texIndex++;
+  }
+
+  // 7. per-stage overdraw and output images: split the range into N stages and, for each, recompute
+  // the overlay for that sub-range and capture the overdraw + output at the end of the stage.
+  std::vector<StageRow> stageRows;
+  {
+    int N = qMax(1, m_ReportStages);
+    uint32_t fullStart, fullEnd;
+    if(wholeFrame)
+    {
+      fullStart = draws.empty() ? 0 : draws[0];
+      fullEnd = draws.empty() ? 0 : draws[draws.size() - 1];
+    }
+    else
+    {
+      fullStart = start;
+      fullEnd = end;
+    }
+
+    if(!draws.empty() && fullEnd > fullStart)
+    {
+      for(int i = 0; i < N; i++)
+      {
+        uint32_t sStart = fullStart + (uint32_t)((uint64_t)(fullEnd - fullStart) * i / N);
+        uint32_t sEnd = (i == N - 1)
+                            ? fullEnd
+                            : fullStart + (uint32_t)((uint64_t)(fullEnd - fullStart) * (i + 1) / N);
+
+        // representative event = last drawcall <= sEnd; also count draws in (sStart, sEnd]
+        uint32_t repEvent = sEnd;
+        int stageDraws = 0;
+        for(uint32_t e : draws)
+        {
+          if(e <= sEnd)
+            repEvent = e;
+          if(e > sStart && e <= sEnd)
+            stageDraws++;
+        }
+
+        // set the overlay to this stage's range then move the event to recompute the overlay
+        TextureDisplay sd = m_TexDisplay;
+        sd.overlayStartEID = sStart;
+        sd.overlayEndEID = sEnd;
+        m_Output->SetTextureDisplay(sd);
+        r->SetFrameEvent(repEvent, true);
+
+        StageRow row;
+        row.idx = i + 1;
+        row.eidStart = sStart;
+        row.eidEnd = sEnd;
+        row.draws = stageDraws;
+        row.minOD = row.maxOD = row.avgOD = 0.0;
+
+        rdcarray<float> sc;
+        uint32_t sw = 0, sh = 0;
+        if(readOverlayCounts(r, sc, sw, sh))
+        {
+          double smn, smx, ssum;
+          uint64_t scov, stotal;
+          computeOverdrawStats(sc, sw, sh, smn, smx, ssum, scov, stotal);
+          row.minOD = smn;
+          row.maxOD = smx;
+          row.avgOD = scov > 0 ? ssum / (double)scov : 0.0;
+
+          QString of = QString(lit("overdraw_stage%1.png")).arg(i + 1);
+          if(saveOverdrawPng(sc, sw, sh, m_ReportDir + lit("/") + of))
+            row.overdrawFile = of;
+        }
+
+        TextureDescription *stex = GetCurrentTexture();
+        if(stex)
+        {
+          TextureSave ts;
+          ts.resourceId = stex->resourceId;
+          ts.destType = FileType::PNG;
+          ts.mip = (int)m_TexDisplay.subresource.mip;
+          ts.slice.sliceIndex = (int)m_TexDisplay.subresource.slice;
+          ts.comp.blackPoint = 0.0f;
+          ts.comp.whitePoint = 1.0f;
+          ts.alpha = AlphaMapping::Preserve;
+          QString outf = QString(lit("output_stage%1.png")).arg(i + 1);
+          if(r->SaveTexture(ts, m_ReportDir + lit("/") + outf).OK())
+            row.outputFile = outf;
+        }
+
+        stageRows.push_back(row);
+      }
+    }
+
+    // restore the original overlay range and event
+    m_Output->SetTextureDisplay(m_TexDisplay);
+    r->SetFrameEvent(origEID, true);
+  }
+
+  // sort textures by memory desc, pixel shaders by instruction count desc
+  std::sort(texRows.begin(), texRows.end(),
+            [](const TexRow &a, const TexRow &b) { return a.bytes > b.bytes; });
+
+  std::vector<PSRow> psRows;
+  for(auto &kv : psStats)
+    psRows.push_back(kv.second);
+  std::sort(psRows.begin(), psRows.end(),
+            [](const PSRow &a, const PSRow &b) { return a.instr > b.instr; });
+
+  size_t drawCount = draws.size();
+  double avgAll = numPixels > 0 ? sum / (double)numPixels : 0.0;
+  double avgCovered = covered > 0 ? sum / (double)covered : 0.0;
+  QString reportDir = m_ReportDir;
+
+  // 7. build the HTML report on the UI thread (resource names need the UI-side cache) and open it
+  GUIInvoke::call(this, [this, reportDir, wholeFrame, start, end, drawCount, haveOverdraw, sum,
+                         avgAll, avgCovered, minOD, maxOD, numPixels, covered, psRows, texRows,
+                         totalTexBytes, outputFile, overdrawFile, stageRows, regionDesc]() {
+    auto esc = [](const QString &s) { return s.toHtmlEscaped(); };
+
+    QString html;
+    html += lit("<!DOCTYPE html><html><head><meta charset=\"utf-8\">");
+    html += lit("<title>Quad Overdraw (Frame) Report</title><style>");
+    html += lit("body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#222;}");
+    html += lit("h1{font-size:20px;}h2{font-size:16px;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px;}");
+    html += lit("table{border-collapse:collapse;margin-top:8px;}td,th{border:1px solid #ccc;padding:4px 8px;font-size:13px;text-align:left;}");
+    html += lit("th{background:#f0f0f0;}tr:nth-child(even){background:#fafafa;}");
+    html += lit(".imgs{display:flex;gap:24px;flex-wrap:wrap;}.imgs figure{margin:0;}");
+    html += lit(".imgs img{max-width:520px;border:1px solid #ccc;background:#eee;}");
+    html += lit("img.thumb{max-width:96px;max-height:96px;border:1px solid #ccc;background:#eee;}");
+    html += lit("img.stageimg{max-width:220px;max-height:160px;border:1px solid #ccc;background:#eee;}");
+    html += lit(".num{text-align:right;}</style></head><body>");
+
+    html += lit("<h1>Quad Overdraw (Frame) Report</h1>");
+    html += lit("<table>");
+    html += lit("<tr><th>EID range</th><td>%1</td></tr>")
+                .arg(wholeFrame ? tr("whole frame") : tr("[%1, %2]").arg(start).arg(end));
+    html += lit("<tr><th>Drawcalls</th><td>%1</td></tr>").arg(drawCount);
+    html += lit("<tr><th>Stat region</th><td>%1</td></tr>").arg(regionDesc.toHtmlEscaped());
+    if(haveOverdraw)
+    {
+      html += lit("<tr><th>Total overdraw (times)</th><td>%1</td></tr>").arg(sum, 0, 'f', 0);
+      html += lit("<tr><th>Average overdraw (all %1 px)</th><td>%2</td></tr>")
+                  .arg(numPixels)
+                  .arg(avgAll, 0, 'f', 4);
+      html += lit("<tr><th>Average overdraw (%1 covered px)</th><td>%2</td></tr>")
+                  .arg(covered)
+                  .arg(avgCovered, 0, 'f', 4);
+      html += lit("<tr><th>Min / Max overdraw (single pixel)</th><td>%1 / %2</td></tr>")
+                  .arg(minOD, 0, 'f', 0)
+                  .arg(maxOD, 0, 'f', 0);
+    }
+    html += lit("<tr><th>Unique pixel shaders</th><td>%1</td></tr>").arg(psRows.size());
+    html += lit("<tr><th>Unique textures</th><td>%1 (%2 MB)</td></tr>")
+                .arg(texRows.size())
+                .arg(totalTexBytes / (1024.0 * 1024.0), 0, 'f', 2);
+    html += lit("</table>");
+
+    html += lit("<h2>Images</h2><div class=\"imgs\">");
+    if(!outputFile.isEmpty())
+      html += lit("<figure><figcaption>Raw output</figcaption><img src=\"%1\"></figure>").arg(outputFile);
+    if(!overdrawFile.isEmpty())
+      html += lit("<figure><figcaption>Overdraw (ramp)</figcaption><img src=\"%1\"></figure>")
+                  .arg(overdrawFile);
+    html += lit("</div>");
+
+    if(!stageRows.empty())
+    {
+      html += lit("<h2>Stages (%1)</h2>").arg(stageRows.size());
+      html += lit("<p>The EID range is split into equal stages. Each stage's overdraw is computed "
+                  "only for the draws in that stage, so you can see which stage is most expensive. "
+                  "The output image is the accumulated result at the end of the stage.</p>");
+      html += lit("<table><tr><th>Stage</th><th>EID range</th><th class=\"num\">Draws</th>"
+                  "<th class=\"num\">Min OD</th><th class=\"num\">Max OD</th>"
+                  "<th class=\"num\">Avg OD</th><th>Overdraw</th><th>Output</th></tr>");
+      for(const StageRow &s : stageRows)
+      {
+        QString odImg = s.overdrawFile.isEmpty()
+                            ? tr("(n/a)")
+                            : lit("<img class=\"stageimg\" src=\"%1\">").arg(s.overdrawFile);
+        QString outImg = s.outputFile.isEmpty()
+                             ? tr("(n/a)")
+                             : lit("<img class=\"stageimg\" src=\"%1\">").arg(s.outputFile);
+        html += lit("<tr><td>%1</td><td>[%2, %3]</td><td class=\"num\">%4</td>"
+                    "<td class=\"num\">%5</td><td class=\"num\">%6</td><td class=\"num\">%7</td>"
+                    "<td>%8</td><td>%9</td></tr>")
+                    .arg(s.idx)
+                    .arg(s.eidStart)
+                    .arg(s.eidEnd)
+                    .arg(s.draws)
+                    .arg(s.minOD, 0, 'f', 0)
+                    .arg(s.maxOD, 0, 'f', 0)
+                    .arg(s.avgOD, 0, 'f', 2)
+                    .arg(odImg)
+                    .arg(outImg);
+      }
+      html += lit("</table>");
+    }
+
+    html += lit("<h2>Pixel shaders (%1)</h2>").arg(psRows.size());
+    html += lit("<table><tr><th>Pixel shader</th><th class=\"num\">Approx instructions</th>"
+                "<th class=\"num\">Textures</th><th class=\"num\">Samplers</th>"
+                "<th class=\"num\">CBuffers</th><th class=\"num\">Interpolants</th>"
+                "<th class=\"num\">Outputs</th></tr>");
+    for(const PSRow &p : psRows)
+    {
+      html += lit("<tr><td>%1</td><td class=\"num\">%2</td><td class=\"num\">%3</td>"
+                  "<td class=\"num\">%4</td><td class=\"num\">%5</td><td class=\"num\">%6</td>"
+                  "<td class=\"num\">%7</td></tr>")
+                  .arg(esc(QString(m_Ctx.GetResourceName(p.id))))
+                  .arg(p.instr)
+                  .arg(p.tex)
+                  .arg(p.samp)
+                  .arg(p.cb)
+                  .arg(p.in)
+                  .arg(p.out);
+    }
+    html += lit("</table>");
+
+    html += lit("<h2>Textures (%1)</h2>").arg(texRows.size());
+    html += lit("<table><tr><th>Preview</th><th>Name</th><th>Size</th><th>Format</th>"
+                "<th class=\"num\">Memory (KB)</th><th class=\"num\">Used in draws</th></tr>");
+    for(const TexRow &t : texRows)
+    {
+      QString img = t.file.isEmpty() ? tr("(n/a)")
+                                     : lit("<img class=\"thumb\" src=\"%1\">").arg(t.file);
+      html += lit("<tr><td>%1</td><td>%2</td><td>%3x%4</td><td>%5</td>"
+                  "<td class=\"num\">%6</td><td class=\"num\">%7</td></tr>")
+                  .arg(img)
+                  .arg(esc(QString(m_Ctx.GetResourceName(t.id))))
+                  .arg(t.w)
+                  .arg(t.h)
+                  .arg(esc(t.fmt))
+                  .arg(t.bytes / 1024.0, 0, 'f', 1)
+                  .arg(t.usedDraws);
+    }
+    html += lit("</table></body></html>");
+
+    QString htmlPath = reportDir + lit("/report.html");
+    QFile f(htmlPath);
+    if(f.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+      f.write(html.toUtf8());
+      f.close();
+    }
+
+    ui->avgOverdrawLabel->setText(QString());
+
+    QDesktopServices::openUrl(QUrl::fromLocalFile(htmlPath));
+  });
 }
 
 void TextureViewer::channelsWidget_mouseClicked(QMouseEvent *event)
@@ -4072,6 +5099,7 @@ void TextureViewer::on_saveTex_clicked()
 
     if(m_TexDisplay.overlay == DebugOverlay::QuadOverdrawDraw ||
        m_TexDisplay.overlay == DebugOverlay::QuadOverdrawPass ||
+       m_TexDisplay.overlay == DebugOverlay::QuadOverdrawFrame ||
        m_TexDisplay.overlay == DebugOverlay::TriangleSizeDraw ||
        m_TexDisplay.overlay == DebugOverlay::TriangleSizePass)
     {

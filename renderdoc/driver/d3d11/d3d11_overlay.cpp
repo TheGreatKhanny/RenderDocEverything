@@ -128,10 +128,19 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
   ResourceId id = texid;
 
+  // for quad overdraw overlays the accumulated overdraw counts are stored in the overlay texture.
+  // only the R channel is used, and float32 stores integer counts exactly up to 2^24, so use the
+  // single-channel R32_FLOAT format (1/4 the memory of RGBA32F, no shader changes needed). Other
+  // overlays store [0,1] RGBA colours so half-float RGBA is enough.
+  DXGI_FORMAT overlayFmt = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+     overlay == DebugOverlay::QuadOverdrawFrame)
+    overlayFmt = DXGI_FORMAT_R32_FLOAT;
+
   D3D11_TEXTURE2D_DESC realTexDesc;
   realTexDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
   realTexDesc.Usage = D3D11_USAGE_DEFAULT;
-  realTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  realTexDesc.Format = overlayFmt;
   realTexDesc.ArraySize = details.texArraySize;
   realTexDesc.MipLevels = details.texMips;
   realTexDesc.CPUAccessFlags = 0;
@@ -222,7 +231,7 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
   ID3D11RenderTargetView *rtv = NULL;
   D3D11_RENDER_TARGET_VIEW_DESC rtDesc = {};
-  rtDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  rtDesc.Format = overlayFmt;
 
   // clear all mips and all slices first
   for(UINT mip = 0; mip < realTexDesc.MipLevels; mip++)
@@ -930,7 +939,8 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
     if(overlay == DebugOverlay::TriangleSizePass)
       m_pDevice->ReplayLog(0, eventId, eReplay_WithoutDraw);
   }
-  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw ||
+          overlay == DebugOverlay::QuadOverdrawFrame)
   {
     SCOPED_TIMER("Quad Overdraw");
 
@@ -939,11 +949,15 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
     if(overlay == DebugOverlay::QuadOverdrawDraw)
       events.clear();
 
-    events.push_back(eventId);
+    // for the whole-frame overlay, passEvents already contains every drawcall in the frame
+    // (including the currently selected event), so don't append it again or it would be
+    // double-counted. Pass/Draw variants need the current event added explicitly.
+    if(overlay != DebugOverlay::QuadOverdrawFrame)
+      events.push_back(eventId);
 
     if(!events.empty())
     {
-      if(overlay == DebugOverlay::QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
         m_pDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
       D3D11RenderState *state = m_pImmediateContext->GetCurrentPipelineState();
@@ -989,7 +1003,8 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
           width = RDCMAX(1U, texdesc.Width >> 1);
           height = RDCMAX(1U, texdesc.Height >> 1);
 
-          if(state->OM.DepthView && texdesc.SampleDesc.Count > 1)
+          if(state->OM.DepthView && texdesc.SampleDesc.Count > 1 &&
+             overlay != DebugOverlay::QuadOverdrawFrame)
           {
             overrideDepthDesc = texdesc;
             overrideDepthDesc.ArraySize = texdesc.SampleDesc.Count;
@@ -1032,13 +1047,24 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
         viewDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
         viewDesc.Texture2DArray.ArraySize = 1;
 
-        if(overlay != DebugOverlay::QuadOverdrawPass)
+        if(overlay == DebugOverlay::QuadOverdrawDraw)
           m_pDevice->GetDebugManager()->CopyTex2DMSToArray(
               UNWRAP(WrappedID3D11Texture2D1, depthOverrideTex),
               UNWRAP(WrappedID3D11Texture2D1, origDepthTex));
 
         m_pDevice->CreateDepthStencilView(depthOverrideTex, &viewDesc, &depthOverride);
         depthOverrideTex->Release();
+      }
+
+      // for the whole-frame overlay, draws may target render targets of differing sizes. The
+      // resolve pass indexes the accumulation buffer by the viewed output's position, so size the
+      // UAV to the viewed output (realTexDesc). Draws targeting the viewed target then accumulate
+      // at matching coordinates; contributions from differently-sized targets are harmlessly
+      // clamped/dropped by out-of-bounds UAV writes.
+      if(overlay == DebugOverlay::QuadOverdrawFrame)
+      {
+        width = RDCMAX(1U, (uint32_t)(realTexDesc.Width >> 1));
+        height = RDCMAX(1U, (uint32_t)(realTexDesc.Height >> 1));
       }
 
       D3D11_TEXTURE2D_DESC uavTexDesc = {
@@ -1069,6 +1095,12 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       {
         D3D11RenderState oldstate = *m_pImmediateContext->GetCurrentPipelineState();
 
+        // Pass/Draw variants share a single pass state captured up-front. For the whole-frame
+        // variant the draws span heterogeneous passes, so use each draw's actual state for the
+        // depth-stencil/rasterizer base so per-draw depth func and culling are respected.
+        D3D11RenderState *drawstate =
+            (overlay == DebugOverlay::QuadOverdrawFrame) ? &oldstate : state;
+
         {
           D3D11_DEPTH_STENCIL_DESC dsdesc = {
               /*DepthEnable =*/TRUE,
@@ -1082,8 +1114,8 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
           };
           ID3D11DepthStencilState *ds = NULL;
 
-          if(state->OM.DepthStencilState)
-            state->OM.DepthStencilState->GetDesc(&dsdesc);
+          if(drawstate->OM.DepthStencilState)
+            drawstate->OM.DepthStencilState->GetDesc(&dsdesc);
 
           dsdesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
           dsdesc.StencilWriteMask = 0;
@@ -1099,9 +1131,9 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
           D3D11_RASTERIZER_DESC rdesc;
           ID3D11RasterizerState *rs = NULL;
 
-          if(state->RS.State)
+          if(drawstate->RS.State)
           {
-            state->RS.State->GetDesc(&rdesc);
+            drawstate->RS.State->GetDesc(&rdesc);
           }
           else
           {
@@ -1133,7 +1165,9 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
         m_pImmediateContext->PSSetShader(m_Overlay.QuadOverdrawPS, NULL, 0);
 
-        if(overlay == DebugOverlay::QuadOverdrawPass && depthOverrideTex)
+        if((overlay == DebugOverlay::QuadOverdrawPass ||
+            overlay == DebugOverlay::QuadOverdrawFrame) &&
+           depthOverrideTex)
           m_pDevice->GetDebugManager()->CopyTex2DMSToArray(
               UNWRAP(WrappedID3D11Texture2D1, depthOverrideTex),
               UNWRAP(WrappedID3D11Texture2D1, origDepthTex));
@@ -1142,7 +1176,7 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
         oldstate.ApplyState(m_pImmediateContext);
 
-        if(overlay == DebugOverlay::QuadOverdrawPass)
+        if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
         {
           m_pDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
@@ -1185,7 +1219,7 @@ ResourceId D3D11Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       SAFE_RELEASE(overdrawSRV);
       SAFE_RELEASE(overdrawUAV);
 
-      if(overlay == DebugOverlay::QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawFrame)
         m_pDevice->ReplayLog(0, eventId, eReplay_WithoutDraw);
     }
   }

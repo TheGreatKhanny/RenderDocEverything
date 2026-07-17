@@ -4664,17 +4664,31 @@ void VulkanReplay::OverlayRendering::Init(WrappedVulkan *driver, VkDescriptorPoo
     pipeInfo.renderPass = RGBA16MSRP;
     pipeInfo.sampleCount = VkSampleCountFlagBits(1 << i);
 
+    // set up outline pipeline configuration
+    pipeInfo.blendEnable = true;
+    pipeInfo.fragment = shaderCache->GetBuiltinModule(BuiltinShader::CheckerboardFS);
+    pipeInfo.pipeLayout = m_CheckerPipeLayout;
+
+    CREATE_OBJECT(m_CheckerF16Pipeline[i], pipeInfo);
+
+    // the quad overdraw resolve renders into a single-channel R32_SFLOAT overlay image, so it needs
+    // a matching renderpass (the checkerboard above uses the RGBA16 one).
+    VkRenderPass R32MSRP = VK_NULL_HANDLE;
+
+    CREATE_OBJECT(R32MSRP, VK_FORMAT_R32_SFLOAT, samples);
     // set up quad resolve pipeline configuration
+    pipeInfo.renderPass = R32MSRP;
     pipeInfo.blendEnable = false;
     pipeInfo.fragment = shaderCache->GetBuiltinModule(BuiltinShader::QuadResolveFS);
     pipeInfo.pipeLayout = m_QuadResolvePipeLayout;
 
-    if(pipeInfo.fragment != VK_NULL_HANDLE &&
+    if(R32MSRP != VK_NULL_HANDLE && pipeInfo.fragment != VK_NULL_HANDLE &&
        shaderCache->GetBuiltinModule(BuiltinShader::QuadWriteFS) != VK_NULL_HANDLE)
     {
       CREATE_OBJECT(m_QuadResolvePipeline[i], pipeInfo);
     }
 
+    driver->vkDestroyRenderPass(driver->GetDev(), R32MSRP, NULL);
     driver->vkDestroyRenderPass(driver->GetDev(), RGBA16MSRP, NULL);
   }
   RDCASSERTEQUAL((uint32_t)driver->GetDeviceProps().limits.framebufferColorSampleCounts,

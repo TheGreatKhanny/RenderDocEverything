@@ -189,6 +189,11 @@ void ReplayOutput::SetTextureDisplay(const TextureDisplay &o)
   }
   if(wasClearBeforeDraw && o.backgroundColor != m_RenderData.texDisplay.backgroundColor)
     m_OverlayDirty = true;
+  // range-limited overlays (whole-frame overdraw) must recompute when the EID range changes
+  if(o.overlay == DebugOverlay::QuadOverdrawFrame &&
+     (o.overlayStartEID != m_RenderData.texDisplay.overlayStartEID ||
+      o.overlayEndEID != m_RenderData.texDisplay.overlayEndEID))
+    m_OverlayDirty = true;
   m_CustomDirty = true;
   m_RenderData.texDisplay = o;
   m_MainOutput.dirty = true;
@@ -229,13 +234,52 @@ void ReplayOutput::SetFrameEvent(int eventId)
   RefreshOverlay();
 }
 
+// recursively walk the action tree collecting every drawcall event ID in the whole frame. Used by
+// the QuadOverdrawFrame overlay to accumulate overdraw across all passes.
+static void GatherFrameDrawcalls(const rdcarray<ActionDescription> &actions,
+                                 rdcarray<uint32_t> &draws)
+{
+  for(const ActionDescription &a : actions)
+  {
+    if(a.flags & ActionFlags::Drawcall)
+      draws.push_back(a.eventId);
+
+    GatherFrameDrawcalls(a.children, draws);
+  }
+}
+
 void ReplayOutput::RefreshOverlay()
 {
   CHECK_REPLAY_THREAD();
 
   ActionDescription *action = m_pController->GetActionByEID(m_EventID);
 
-  passEvents = m_pDevice->GetPassEvents(m_EventID);
+  if(m_Type == ReplayOutputType::Texture &&
+     m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawFrame)
+  {
+    // for the whole-frame overdraw overlay, gather every drawcall in the entire frame rather than
+    // just the current pass. The overlay backend then accumulates overdraw across all of them.
+    passEvents.clear();
+    GatherFrameDrawcalls(m_pController->GetRootActions(), passEvents);
+
+    // optionally restrict accumulation to an [start, end] event ID range. A zero end means the
+    // whole frame.
+    uint32_t rangeStart = m_RenderData.texDisplay.overlayStartEID;
+    uint32_t rangeEnd = m_RenderData.texDisplay.overlayEndEID;
+    if(rangeEnd > 0)
+    {
+      rdcarray<uint32_t> filtered;
+      filtered.reserve(passEvents.size());
+      for(uint32_t eid : passEvents)
+        if(eid >= rangeStart && eid <= rangeEnd)
+          filtered.push_back(eid);
+      passEvents = filtered;
+    }
+  }
+  else
+  {
+    passEvents = m_pDevice->GetPassEvents(m_EventID);
+  }
 
   bool postVSBuffers = false;
   bool postVSWholePass = false;
@@ -696,6 +740,7 @@ void ReplayOutput::DisplayContext()
 
   if((m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawDraw ||
       m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawPass ||
+      m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawFrame ||
       m_RenderData.texDisplay.overlay == DebugOverlay::TriangleSizeDraw ||
       m_RenderData.texDisplay.overlay == DebugOverlay::TriangleSizePass) &&
      m_OverlayResourceId != ResourceId())

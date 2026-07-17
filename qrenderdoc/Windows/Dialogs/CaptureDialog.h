@@ -98,6 +98,7 @@ private slots:
   void on_saveSettings_clicked();
   void on_loadSettings_clicked();
   void on_loadLastCapture_clicked();
+  void on_steamGameConfig_clicked();
 
   void on_launch_clicked();
 

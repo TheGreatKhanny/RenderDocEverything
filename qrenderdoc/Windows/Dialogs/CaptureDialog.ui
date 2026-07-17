@@ -857,6 +857,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="steamGameConfig">
+        <property name="toolTip">
+         <string>直接配置 Steam 游戏编号和需要截帧的进程，无需加载配置文件</string>
+        </property>
+        <property name="text">
+         <string>配置 Steam 游戏...</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="buttonsSpace">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>

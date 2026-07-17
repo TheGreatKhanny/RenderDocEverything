@@ -26,6 +26,8 @@
 #include "d3d11_hooks.h"
 #include "driver/dxgi/dxgi_wrapped.h"
 #include "hooks/hooks.h"
+#include "os/os_specific.h"
+#include "strings/string_utils.h"
 #include "d3d11_device.h"
 
 ID3DDevice *GetD3D11DeviceIfAlloc(IUnknown *dev)
@@ -145,18 +147,44 @@ private:
       dummyUsed = true;
     }
 
+    // When the application explicitly requests that layer settings are not altered we honour that
+    // request and don't wrap the device below. In that pass-through case the real create call must
+    // also receive the application's immediate-context output pointer. Previously this was always
+    // replaced with NULL, which meant a successful device creation returned no immediate context
+    // to the application and could make its graphics initialisation fail despite an S_OK result.
+    const bool preventLayerChanges =
+        (Flags & D3D11_CREATE_DEVICE_PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY) != 0;
+    rdcstr executablePath;
+    FileIO::GetExecutableFilename(executablePath);
+    executablePath = strlower(executablePath);
+
+    bool allowExplicitOverride =
+        Process::GetEnvVariable("RENDERDOC_D3D11_ALLOW_LAYER_OVERRIDE") == "1";
+    rdcarray<rdcstr> overridePatterns;
+    split(strlower(Process::GetEnvVariable("RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST")),
+          overridePatterns, ';');
+    for(const rdcstr &pattern : overridePatterns)
+    {
+      if(!pattern.empty() && executablePath.contains(pattern))
+      {
+        allowExplicitOverride = true;
+        break;
+      }
+    }
+    const bool suppress = preventLayerChanges && !allowExplicitOverride;
+
+    if(preventLayerChanges && allowExplicitOverride)
+      RDCWARN("Overriding D3D11 layer suppression by explicit environment opt-in.");
+
     HRESULT ret = real(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels,
-                       SDKVersion, pUsedSwapDesc, ppSwapChain, ppDevice, pFeatureLevel, NULL);
+                       SDKVersion, pUsedSwapDesc, ppSwapChain, ppDevice, pFeatureLevel,
+                       suppress ? ppImmediateContext : NULL);
 
     SAFE_RELEASE(dummydev);
     if(dummyUsed)
       ppDevice = NULL;
 
     RDCDEBUG("Called real createdevice...");
-
-    bool suppress = false;
-
-    suppress = (Flags & D3D11_CREATE_DEVICE_PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY) != 0;
 
     if(suppress)
     {

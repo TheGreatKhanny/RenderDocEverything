@@ -23,11 +23,30 @@
  ******************************************************************************/
 
 #include "CaptureDialog.h"
+#include <climits>
+#include <QApplication>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
+#include <QScreen>
+#include <QScrollArea>
+#include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <QVBoxLayout>
+#include <QWindow>
 #include "Code/QRDUtils.h"
 #include "Code/qprocessinfo.h"
 #include "Windows/Dialogs/EnvironmentEditor.h"
@@ -752,6 +771,315 @@ void CaptureDialog::on_envVarEdit_clicked()
     SetEnvironmentModifications(envEditor.modifications());
 }
 
+void CaptureDialog::on_steamGameConfig_clicked()
+{
+  if(m_Ctx.Replay().CurrentRemote().IsValid())
+  {
+    RDDialog::critical(this, tr("仅支持本机 Steam 截帧"),
+                       tr("Steam 游戏截帧配置只能在本机使用。"));
+    return;
+  }
+
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("配置 Steam 游戏截帧"));
+  dialog.setMinimumWidth(640);
+
+  QVBoxLayout *layout = new QVBoxLayout(&dialog);
+
+  QScrollArea *scrollArea = new QScrollArea(&dialog);
+  scrollArea->setWidgetResizable(true);
+  scrollArea->setFrameShape(QFrame::NoFrame);
+  scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  scrollArea->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
+
+  QWidget *formContents = new QWidget(scrollArea);
+  QVBoxLayout *formLayout = new QVBoxLayout(formContents);
+  formLayout->setContentsMargins(0, 0, 0, 0);
+
+  QLabel *intro = new QLabel(
+      tr("RenderDoc 会启动一个新的 Steam 进程，并且只注入下方白名单匹配的子进程。"
+         "如果游戏经过一个或多个独立启动器，请把这些中间启动器也加入白名单。"),
+      formContents);
+  intro->setWordWrap(true);
+  formLayout->addWidget(intro);
+
+  QGroupBox *requiredGroup = new QGroupBox(tr("Steam 游戏"), formContents);
+  QFormLayout *requiredForm = new QFormLayout(requiredGroup);
+  requiredForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+  QWidget *steamPathRow = new QWidget(requiredGroup);
+  QHBoxLayout *steamPathLayout = new QHBoxLayout(steamPathRow);
+  steamPathLayout->setContentsMargins(0, 0, 0, 0);
+  QLineEdit *steamPath = new QLineEdit(steamPathRow);
+  QPushButton *steamBrowse = new QPushButton(tr("浏览..."), steamPathRow);
+  steamPathLayout->addWidget(steamPath, 1);
+  steamPathLayout->addWidget(steamBrowse);
+  requiredForm->addRow(tr("Steam 程序："), steamPathRow);
+
+  QWidget *appIdField = new QWidget(requiredGroup);
+  QVBoxLayout *appIdLayout = new QVBoxLayout(appIdField);
+  appIdLayout->setContentsMargins(0, 0, 0, 0);
+  appIdLayout->setSpacing(3);
+  QLineEdit *appId = new QLineEdit(appIdField);
+  appId->setValidator(
+      new QRegularExpressionValidator(QRegularExpression(lit("[0-9]{1,10}")), appId));
+  appId->setPlaceholderText(tr("Warframe 参考配置：230410"));
+  appIdLayout->addWidget(appId);
+  QLabel *appIdHelp = new QLabel(
+      tr("查找方法：打开游戏的 Steam 商店页面，复制网址中 /app/ 后面的数字。"
+         "例如 store.steampowered.com/app/230410/... 中的 AppID 是 230410。"
+         "也可以在 Steam 游戏库目录中查看 steamapps/appmanifest_230410.acf。"),
+      appIdField);
+  appIdHelp->setWordWrap(true);
+  appIdHelp->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  appIdLayout->addWidget(appIdHelp);
+  requiredForm->addRow(tr("Steam AppID（必填）："), appIdField);
+
+  QWidget *allowedField = new QWidget(requiredGroup);
+  QVBoxLayout *allowedLayout = new QVBoxLayout(allowedField);
+  allowedLayout->setContentsMargins(0, 0, 0, 0);
+  allowedLayout->setSpacing(3);
+  QPlainTextEdit *allowed = new QPlainTextEdit(allowedField);
+  allowed->setTabChangesFocus(true);
+  allowed->setMinimumHeight(90);
+  allowed->setPlaceholderText(
+      tr("Warframe 示例：Launcher.exe；Warframe.x64.exe（分两行填写）"));
+  allowedLayout->addWidget(allowed);
+  QLabel *allowedHelp = new QLabel(
+      tr("填写方法：每行填写一项，并且必须填写最终游戏程序。如果 Steam 会先打开独立启动器，"
+         "还需要填写该启动器。可以先正常启动一次游戏，然后在任务管理器的“详细信息”页面中，"
+         "右键进程并选择“打开文件所在的位置”来确认名称。匹配不区分大小写，也可以填写有辨识度的路径片段。\n"
+         "示例：Game\\Launcher.exe   和   Game\\Binaries\\Win64\\Game.exe\n"
+         "不要填写 Steam.exe、steamwebhelper.exe 或崩溃上报进程。"),
+      allowedField);
+  allowedHelp->setWordWrap(true);
+  allowedHelp->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  allowedLayout->addWidget(allowedHelp);
+  requiredForm->addRow(tr("允许注入的子进程（必填）："), allowedField);
+  formLayout->addWidget(requiredGroup);
+
+  QCheckBox *showAdvanced = new QCheckBox(tr("显示高级过滤设置"), formContents);
+  formLayout->addWidget(showAdvanced);
+
+  QGroupBox *advancedGroup = new QGroupBox(tr("高级过滤设置"), formContents);
+  QFormLayout *advancedForm = new QFormLayout(advancedGroup);
+  advancedForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+  QPlainTextEdit *denied = new QPlainTextEdit(advancedGroup);
+  denied->setTabChangesFocus(true);
+  denied->setMinimumHeight(70);
+  denied->setPlaceholderText(tr("每行填写一个要排除的命令行片段"));
+  advancedForm->addRow(tr("排除的子进程特征："), denied);
+  QLabel *deniedHelp = new QLabel(
+      tr("通常保留默认值即可。匹配这些特征的辅助进程会优先排除，不再检查允许列表。"),
+      advancedGroup);
+  deniedHelp->setWordWrap(true);
+  advancedForm->addRow(QString(), deniedHelp);
+
+  QPlainTextEdit *d3d11Overrides = new QPlainTextEdit(advancedGroup);
+  d3d11Overrides->setTabChangesFocus(true);
+  d3d11Overrides->setMinimumHeight(60);
+  d3d11Overrides->setPlaceholderText(
+      tr("Warframe 示例：warframe.x64.exe；其他游戏通常留空"));
+  advancedForm->addRow(tr("D3D11 强制覆盖目标："), d3d11Overrides);
+  QLabel *overrideHelp = new QLabel(
+      tr("通常留空。只有 RenderDoc 日志明确显示应用要求禁止挂钩时，"
+         "才填写最终的 D3D11 游戏程序。"),
+      advancedGroup);
+  overrideHelp->setWordWrap(true);
+  advancedForm->addRow(QString(), overrideHelp);
+  advancedGroup->setVisible(false);
+  formLayout->addWidget(advancedGroup);
+
+  scrollArea->setWidget(formContents);
+  layout->addWidget(scrollArea, 1);
+
+  QLabel *warning = new QLabel(
+      tr("启动前，请从系统托盘彻底退出 Steam。如果 Steam 已在运行，启动请求会被转交给"
+         "现有 Steam 进程，RenderDoc 将无法跟踪完整的游戏启动链。"),
+      &dialog);
+  warning->setWordWrap(true);
+  QPalette warningPalette = warning->palette();
+  warningPalette.setColor(QPalette::WindowText, QColor(190, 110, 0));
+  warning->setPalette(warningPalette);
+  layout->addWidget(warning);
+
+  QLabel *validationError = new QLabel(&dialog);
+  validationError->setWordWrap(true);
+  QPalette errorPalette = validationError->palette();
+  errorPalette.setColor(QPalette::WindowText, QColor(190, 40, 40));
+  validationError->setPalette(errorPalette);
+  validationError->setVisible(false);
+  layout->addWidget(validationError);
+
+  QDialogButtonBox *buttons =
+      new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  buttons->button(QDialogButtonBox::Ok)->setText(tr("应用配置"));
+  buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+  layout->addWidget(buttons);
+
+  auto environmentValue = [this](const char *name) {
+    for(const EnvironmentModification &mod : m_EnvModifications)
+      if(mod.name == name && mod.mod == EnvMod::Set)
+        return QString::fromUtf8(mod.value.c_str());
+    return QString();
+  };
+
+  QString initialSteamPath;
+  if(QFileInfo(ui->exePath->text()).fileName().compare(lit("steam.exe"), Qt::CaseInsensitive) == 0)
+    initialSteamPath = ui->exePath->text();
+  if(initialSteamPath.isEmpty())
+  {
+    QSettings steamRegistry(lit("HKEY_CURRENT_USER\\Software\\Valve\\Steam"),
+                            QSettings::NativeFormat);
+    initialSteamPath = steamRegistry.value(lit("SteamExe")).toString();
+  }
+  if(initialSteamPath.isEmpty())
+    initialSteamPath = lit("C:\\Program Files (x86)\\Steam\\steam.exe");
+  steamPath->setText(QDir::toNativeSeparators(initialSteamPath));
+
+  QRegularExpression appIdExpression(lit("(?:^|\\s)-applaunch\\s+(\\d+)"));
+  QRegularExpressionMatch appIdMatch = appIdExpression.match(ui->cmdline->text());
+  if(appIdMatch.hasMatch())
+    appId->setText(appIdMatch.captured(1));
+
+  QString allowValue = environmentValue("RENDERDOC_STEAM_CHILD_ALLOWLIST");
+  allowed->setPlainText(allowValue.replace(QLatin1Char(';'), QLatin1Char('\n')));
+
+  QString denyValue = environmentValue("RENDERDOC_STEAM_CHILD_DENYLIST");
+  if(denyValue.isEmpty())
+    denyValue = lit("--type=;steamwebhelper.exe;crashpad;renderdoccmd.exe;qrenderdoc.exe");
+  denied->setPlainText(denyValue.replace(QLatin1Char(';'), QLatin1Char('\n')));
+
+  QString overrideValue = environmentValue("RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST");
+  d3d11Overrides->setPlainText(overrideValue.replace(QLatin1Char(';'), QLatin1Char('\n')));
+
+  QScreen *screen = QGuiApplication::primaryScreen();
+  if(window() && window()->windowHandle() && window()->windowHandle()->screen())
+    screen = window()->windowHandle()->screen();
+
+  int maxDialogHeight = 800;
+  if(screen)
+    maxDialogHeight = qMax(1, screen->availableGeometry().height() - 64);
+  dialog.setMaximumHeight(maxDialogHeight);
+
+  auto updateDialogHeight = [&]() {
+    formLayout->invalidate();
+    formLayout->activate();
+
+    // Keep enough fixed space for the warning, validation message and action buttons. The
+    // configuration area only scrolls when its contents genuinely cannot fit on this screen.
+    int maxFormHeight = qMax(160, maxDialogHeight - 140);
+    scrollArea->setMinimumHeight(qMin(formContents->sizeHint().height(), maxFormHeight));
+    scrollArea->updateGeometry();
+    layout->activate();
+    dialog.adjustSize();
+
+    // Expanding a centred dialog can otherwise push the buttons below the current screen.
+    if(dialog.isVisible() && screen)
+    {
+      QRect available = screen->availableGeometry().adjusted(16, 16, -16, -16);
+      QRect frame = dialog.frameGeometry();
+      int left = qBound(available.left(), frame.left(), available.right() - frame.width() + 1);
+      int top = qBound(available.top(), frame.top(), available.bottom() - frame.height() + 1);
+      dialog.move(dialog.pos() + QPoint(left - frame.left(), top - frame.top()));
+    }
+  };
+
+  QObject::connect(showAdvanced, &QCheckBox::toggled, [&](bool visible) {
+    advancedGroup->setVisible(visible);
+    updateDialogHeight();
+  });
+  showAdvanced->setChecked(!overrideValue.isEmpty());
+  updateDialogHeight();
+
+  QObject::connect(steamBrowse, &QPushButton::clicked, [&]() {
+    QString selected = RDDialog::getOpenFileName(
+        &dialog, tr("选择 Steam 程序"), QFileInfo(steamPath->text()).absolutePath(),
+        tr("Steam 程序 (steam.exe);;可执行程序 (*.exe)"));
+    if(!selected.isEmpty())
+      steamPath->setText(QDir::toNativeSeparators(selected));
+  });
+
+  auto normalisePatterns = [](QString text) {
+    text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    text.replace(QLatin1Char(';'), QLatin1Char('\n'));
+    QStringList result;
+    for(const QString &part : text.split(QLatin1Char('\n'), QString::SkipEmptyParts))
+    {
+      QString trimmed = part.trimmed();
+      if(!trimmed.isEmpty() && !result.contains(trimmed, Qt::CaseInsensitive))
+        result.push_back(trimmed);
+    }
+    return result;
+  };
+
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, [&]() {
+    QFileInfo steamInfo(steamPath->text());
+    bool validAppId = false;
+    qulonglong steamAppId = appId->text().toULongLong(&validAppId);
+    QStringList allowPatterns = normalisePatterns(allowed->toPlainText());
+
+    QString error;
+    if(!steamInfo.exists() || !steamInfo.isFile() ||
+       steamInfo.fileName().compare(lit("steam.exe"), Qt::CaseInsensitive) != 0)
+      error = tr("请选择有效的 steam.exe 文件。");
+    else if(!validAppId || steamAppId == 0 || steamAppId > UINT_MAX)
+      error = tr("请输入有效的纯数字 Steam AppID。");
+    else if(allowPatterns.isEmpty())
+      error = tr("请在允许列表中至少填写最终的游戏程序。");
+
+    if(!error.isEmpty())
+    {
+      validationError->setText(error);
+      validationError->setVisible(true);
+      return;
+    }
+
+    validationError->setVisible(false);
+    dialog.accept();
+  });
+
+  if(RDDialog::show(&dialog) != QDialog::Accepted)
+    return;
+
+  QStringList allowPatterns = normalisePatterns(allowed->toPlainText());
+  QStringList denyPatterns = normalisePatterns(denied->toPlainText());
+  QStringList overridePatterns = normalisePatterns(d3d11Overrides->toPlainText());
+
+  rdcarray<EnvironmentModification> environment;
+  for(const EnvironmentModification &mod : m_EnvModifications)
+  {
+    if(mod.name != "RENDERDOC_STEAM_CAPTURE_CHAIN" &&
+       mod.name != "RENDERDOC_STEAM_CHILD_ALLOWLIST" &&
+       mod.name != "RENDERDOC_STEAM_CHILD_DENYLIST" &&
+       mod.name != "RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST" &&
+       mod.name != "RENDERDOC_WARFRAME_STEAM_CHAIN")
+      environment.push_back(mod);
+  }
+
+  auto addEnvironment = [&environment](const char *name, const QString &value) {
+    QByteArray utf8 = value.toUtf8();
+    environment.push_back(
+        EnvironmentModification(EnvMod::Set, EnvSep::NoSep, name, utf8.constData()));
+  };
+
+  addEnvironment("RENDERDOC_STEAM_CAPTURE_CHAIN", lit("1"));
+  addEnvironment("RENDERDOC_STEAM_CHILD_ALLOWLIST", allowPatterns.join(QLatin1Char(';')));
+  addEnvironment("RENDERDOC_STEAM_CHILD_DENYLIST", denyPatterns.join(QLatin1Char(';')));
+  if(!overridePatterns.isEmpty())
+    addEnvironment("RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST",
+                   overridePatterns.join(QLatin1Char(';')));
+
+  SetInjectMode(false);
+  ui->exePath->setText(QDir::toNativeSeparators(QFileInfo(steamPath->text()).absoluteFilePath()));
+  ui->workDirPath->setText(QDir::toNativeSeparators(QFileInfo(steamPath->text()).absolutePath()));
+  ui->cmdline->setText(QFormatStr("-applaunch %1").arg(appId->text()));
+  SetEnvironmentModifications(environment);
+  ui->HookIntoChildren->setChecked(true);
+}
+
 void CaptureDialog::on_toggleGlobal_clicked()
 {
   if(!ui->toggleGlobal->isEnabled())
@@ -759,9 +1087,11 @@ void CaptureDialog::on_toggleGlobal_clicked()
 
   ui->toggleGlobal->setEnabled(false);
 
-  QList<QWidget *> enableDisableWidgets = {ui->exePath,       ui->exePathBrowse, ui->workDirPath,
-                                           ui->workDirBrowse, ui->cmdline,       ui->launch,
-                                           ui->saveSettings,  ui->loadSettings};
+  QList<QWidget *> enableDisableWidgets = {ui->exePath,       ui->exePathBrowse,
+                                           ui->workDirPath,   ui->workDirBrowse,
+                                           ui->cmdline,       ui->launch,
+                                           ui->saveSettings,  ui->loadSettings,
+                                           ui->steamGameConfig};
 
   for(QWidget *o : ui->optionsGroup->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly))
     if(o)

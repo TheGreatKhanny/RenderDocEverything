@@ -4664,13 +4664,6 @@ void VulkanReplay::OverlayRendering::Init(WrappedVulkan *driver, VkDescriptorPoo
     pipeInfo.renderPass = RGBA16MSRP;
     pipeInfo.sampleCount = VkSampleCountFlagBits(1 << i);
 
-    // set up outline pipeline configuration
-    pipeInfo.blendEnable = true;
-    pipeInfo.fragment = shaderCache->GetBuiltinModule(BuiltinShader::CheckerboardFS);
-    pipeInfo.pipeLayout = m_CheckerPipeLayout;
-
-    CREATE_OBJECT(m_CheckerF16Pipeline[i], pipeInfo);
-
     // the quad overdraw resolve renders into a single-channel R32_SFLOAT overlay image, so it needs
     // a matching renderpass (the checkerboard above uses the RGBA16 one).
     VkRenderPass R32MSRP = VK_NULL_HANDLE;

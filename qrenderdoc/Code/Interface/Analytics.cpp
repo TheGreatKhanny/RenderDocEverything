@@ -325,7 +325,7 @@ void AnalyticsSerialise(Analytics &serdb, QVariantMap &values, AnalyticsSerialis
 
 // only check this on 64-bit as it is different on 32-bit
 #if QT_POINTER_SIZE == 8 && defined(Q_OS_WIN32)
-  static_assert(sizeof(Analytics) == 149, "Sizeof Analytics has changed - update serialisation.");
+  static_assert(sizeof(Analytics) == 150, "Sizeof Analytics has changed - update serialisation.");
 #endif
 
   QString doc;

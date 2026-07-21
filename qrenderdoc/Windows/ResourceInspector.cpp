@@ -63,6 +63,8 @@ void kwSaveStringToFile(const QString &content, const QString &filePath)
   {
     QTextStream out(&file);
     out.setCodec("UTF-8");
+    // Excel on Windows only auto-detects UTF-8 CSV files when a BOM is present.
+    out.setGenerateByteOrderMark(true);
     out << content;
     file.close();
   }

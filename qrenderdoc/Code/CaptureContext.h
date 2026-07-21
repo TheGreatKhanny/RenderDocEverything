@@ -393,8 +393,8 @@ public:
       }
       else
       {
-        TempName = InParentName + QString::fromLocal8Bit("【") + Elem.customName +
-                   QString::fromLocal8Bit("】");
+        TempName = InParentName + QString::fromUtf8("【") + Elem.customName +
+                   QString::fromUtf8("】");
       }
       if(Elem.flags & InFlags) 
       {

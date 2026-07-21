@@ -311,7 +311,7 @@ ResourceInspector::ResourceInspector(ICaptureContext &ctx, QWidget *parent)
   vertical->addWidget(ui->dockarea);
 
   // kw: Add new button for exporting resource list infos. 20251223
-  ui->exportFolderPath->setPlaceholderText(QString::fromLocal8Bit("请填写文件路径..."));
+  ui->exportFolderPath->setPlaceholderText(QString::fromUtf8("请填写文件路径..."));
   ui->exportFolderPath->setText(ExportFolderPath);
   // kw: Add new button for exporting resource list infos. 20251223 ~end
   ui->resourceListFilter->setPlaceholderText(tr("Filter..."));

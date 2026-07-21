@@ -46,7 +46,7 @@
 #include "Code/CaptureContext.h"
 
 
-#define TEXT QString::fromLocal8Bit
+#define TEXT QString::fromUtf8
 #define NSTR QString::number
 
 QString GetDateTimeStr()

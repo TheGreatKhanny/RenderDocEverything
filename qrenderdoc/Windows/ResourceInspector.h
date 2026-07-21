@@ -111,7 +111,7 @@ public:
   TextureSave m_SaveConfig;
   bool FastSaveTexture2D(ResourceId resourceId, TextureDescription *texptr, QString FileName,const QString &FilePath);
 
-  QString ExportFolderPath = QString::fromLocal8Bit("C:/RD导出/");
+  QString ExportFolderPath = QString::fromUtf8("C:/RD导出/");
   ExportSizeType m_exportSizeType = ExportSizeType::ExportTex_Nothing;
   bool m_bEnableBlackListType = true;
   // kw: Add new button for exporting resource list infos. 20251223 ~end

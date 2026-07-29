@@ -338,17 +338,23 @@ private:
       return false;
 
     // When Steam itself is launched for a capture, keep recursive injection narrowly scoped to a
-    // caller-provided allowlist. Intermediate launchers must be included so their later game child
-    // can be intercepted. Deny patterns take precedence, which is useful for Chromium/CEF helpers
-    // that share the launcher's executable but add a --type= argument.
+    // caller-provided allowlist by default. Deny patterns take precedence, which is useful for
+    // Chromium/CEF helpers that share the launcher's executable but add a --type= argument. An
+    // explicitly enabled launcher relay mode can carry the hooks through unknown intermediate
+    // launchers in a development-only multi-process launch chain.
     if(Process::GetEnvVariable("RENDERDOC_STEAM_CAPTURE_CHAIN") == "1")
     {
+      const bool relayUnlistedLaunchers =
+          Process::GetEnvVariable("RENDERDOC_STEAM_LAUNCHER_RELAY") == "1";
       rdcarray<rdcstr> patterns;
       split(strlower(Process::GetEnvVariable("RENDERDOC_STEAM_CHILD_DENYLIST")), patterns, ';');
       for(const rdcstr &pattern : patterns)
       {
         if(!pattern.empty() && combined.contains(pattern))
+        {
+          RDCLOG("Steam capture chain: skipped denied child process %s", combined.c_str());
           return false;
+        }
       }
 
       patterns.clear();
@@ -356,10 +362,23 @@ private:
       for(const rdcstr &pattern : patterns)
       {
         if(!pattern.empty() && combined.contains(pattern))
+        {
+          RDCLOG("Steam capture chain: injecting allowlisted child process %s", combined.c_str());
           return true;
+        }
       }
 
-      // An empty or non-matching allowlist is deliberately fail-closed.
+      if(relayUnlistedLaunchers)
+      {
+        RDCLOG("Steam capture chain: injecting unlisted child process as launcher relay %s",
+               combined.c_str());
+        return true;
+      }
+
+      RDCLOG("Steam capture chain: skipped child process not in allowlist %s", combined.c_str());
+
+      // An empty or non-matching allowlist is deliberately fail-closed unless launcher relay mode
+      // was explicitly enabled.
       return false;
     }
 

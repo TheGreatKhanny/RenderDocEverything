@@ -797,8 +797,9 @@ void CaptureDialog::on_steamGameConfig_clicked()
   formLayout->setContentsMargins(0, 0, 0, 0);
 
   QLabel *intro = new QLabel(
-      tr("RenderDoc 会启动一个新的 Steam 进程，并且只注入下方白名单匹配的子进程。"
-         "如果游戏经过一个或多个独立启动器，请把这些中间启动器也加入白名单。"),
+      tr("RenderDoc 会启动一个新的 Steam 进程，并且默认只注入下方白名单匹配的子进程。"
+         "如果游戏经过一个或多个独立启动器，请把这些中间启动器也加入白名单，"
+         "或为自研调试构建启用下方的启动器中继模式。"),
       formContents);
   intro->setWordWrap(true);
   formLayout->addWidget(intro);
@@ -856,6 +857,18 @@ void CaptureDialog::on_steamGameConfig_clicked()
   allowedHelp->setTextInteractionFlags(Qt::TextSelectableByMouse);
   allowedLayout->addWidget(allowedHelp);
   requiredForm->addRow(tr("允许注入的子进程（必填）："), allowedField);
+
+  QCheckBox *relayLaunchers =
+      new QCheckBox(tr("中继未列入白名单的启动器（仅开发调试）"), requiredGroup);
+  relayLaunchers->setToolTip(
+      tr("允许非排除列表中的中间启动器继承 RenderDoc，以便其后启动最终游戏程序。"));
+  requiredForm->addRow(QString(), relayLaunchers);
+  QLabel *relayHelp = new QLabel(
+      tr("勾选后，命中排除列表的进程仍不会注入；其他未匹配进程会作为启动器中继注入，"
+         "使后续匹配的游戏进程能够被捕获。仅用于自研或已授权的开发构建。"),
+      requiredGroup);
+  relayHelp->setWordWrap(true);
+  requiredForm->addRow(QString(), relayHelp);
   formLayout->addWidget(requiredGroup);
 
   QCheckBox *showAdvanced = new QCheckBox(tr("显示高级过滤设置"), formContents);
@@ -895,8 +908,8 @@ void CaptureDialog::on_steamGameConfig_clicked()
   layout->addWidget(scrollArea, 1);
 
   QLabel *warning = new QLabel(
-      tr("启动前，请从系统托盘彻底退出 Steam。如果 Steam 已在运行，启动请求会被转交给"
-         "现有 Steam 进程，RenderDoc 将无法跟踪完整的游戏启动链。"),
+      tr("启动前，请从系统托盘彻底退出 Steam 以及游戏所需的第三方启动器。"
+         "如果它们已在运行，启动请求可能被转交给现有进程，RenderDoc 将无法跟踪完整的游戏启动链。"),
       &dialog);
   warning->setWordWrap(true);
   QPalette warningPalette = warning->palette();
@@ -953,6 +966,8 @@ void CaptureDialog::on_steamGameConfig_clicked()
 
   QString overrideValue = environmentValue("RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST");
   d3d11Overrides->setPlainText(overrideValue.replace(QLatin1Char(';'), QLatin1Char('\n')));
+
+  relayLaunchers->setChecked(environmentValue("RENDERDOC_STEAM_LAUNCHER_RELAY") == lit("1"));
 
   QScreen *screen = QGuiApplication::primaryScreen();
   if(window() && window()->windowHandle() && window()->windowHandle()->screen())
@@ -1054,6 +1069,7 @@ void CaptureDialog::on_steamGameConfig_clicked()
     if(mod.name != "RENDERDOC_STEAM_CAPTURE_CHAIN" &&
        mod.name != "RENDERDOC_STEAM_CHILD_ALLOWLIST" &&
        mod.name != "RENDERDOC_STEAM_CHILD_DENYLIST" &&
+       mod.name != "RENDERDOC_STEAM_LAUNCHER_RELAY" &&
        mod.name != "RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST" &&
        mod.name != "RENDERDOC_WARFRAME_STEAM_CHAIN")
       environment.push_back(mod);
@@ -1068,6 +1084,8 @@ void CaptureDialog::on_steamGameConfig_clicked()
   addEnvironment("RENDERDOC_STEAM_CAPTURE_CHAIN", lit("1"));
   addEnvironment("RENDERDOC_STEAM_CHILD_ALLOWLIST", allowPatterns.join(QLatin1Char(';')));
   addEnvironment("RENDERDOC_STEAM_CHILD_DENYLIST", denyPatterns.join(QLatin1Char(';')));
+  if(relayLaunchers->isChecked())
+    addEnvironment("RENDERDOC_STEAM_LAUNCHER_RELAY", lit("1"));
   if(!overridePatterns.isEmpty())
     addEnvironment("RENDERDOC_D3D11_LAYER_OVERRIDE_ALLOWLIST",
                    overridePatterns.join(QLatin1Char(';')));
@@ -1230,6 +1248,37 @@ void CaptureDialog::on_loadLastCapture_clicked()
 
 void CaptureDialog::on_launch_clicked()
 {
+  const bool steamCapture =
+      !m_Ctx.Replay().CurrentRemote().IsValid() &&
+      QFileInfo(ui->exePath->text()).fileName().compare(lit("steam.exe"), Qt::CaseInsensitive) == 0;
+  bool steamCaptureChain = false;
+
+  for(const EnvironmentModification &mod : m_EnvModifications)
+  {
+    if(mod.name == "RENDERDOC_STEAM_CAPTURE_CHAIN" && mod.mod == EnvMod::Set && mod.value == "1")
+    {
+      steamCaptureChain = true;
+      break;
+    }
+  }
+
+  if(steamCapture && steamCaptureChain)
+  {
+    const QProcessList processes = QProcessInfo::enumerate(false);
+    for(const QProcessInfo &process : processes)
+    {
+      if(process.name().compare(lit("steam.exe"), Qt::CaseInsensitive) == 0)
+      {
+        RDDialog::critical(
+            this, tr("请先退出 Steam"),
+            tr("检测到 Steam 已在运行。Steam 会把启动请求转交给现有进程，RenderDoc 无法"
+               "继续跟踪子进程并截帧。请从系统托盘完全退出 Steam 和游戏所需的第三方启动器，"
+               "然后重新点击“启动”。"));
+        return;
+      }
+    }
+  }
+
   TriggerCapture();
 }
 

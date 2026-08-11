@@ -45,6 +45,7 @@ class QKeyEvent;
 class QMouseEvent;
 class QComboBox;
 class QTextEdit;
+class HLSLAnalyzerPanel;
 
 // from Scintilla
 typedef intptr_t sptr_t;
@@ -361,6 +362,9 @@ private:
   QMap<ScintillaEdit *, QList<sptr_t>> m_Bookmarks;
 
   QTextEdit *debugInfoLog = NULL;
+
+  // HLSL 指令统计面板（仅编辑 HLSL 时启用）
+  HLSLAnalyzerPanel *m_HLSLAnalyzer = NULL;
 
   static const int CURRENT_MARKER = 0;
   static const int BREAKPOINT_MARKER = 2;

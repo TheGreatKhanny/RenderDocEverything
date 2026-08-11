@@ -45,6 +45,7 @@
 #include "toolwindowmanager/ToolWindowManager.h"
 #include "toolwindowmanager/ToolWindowManagerArea.h"
 #include "ui_ShaderViewer.h"
+#include "HLSLAnalyzerPanel.h"
 
 #if defined(RELEASE)
 #define SHADER_VARIABLE_CHANGE_CONSISTENCY_CHECKS 0
@@ -536,6 +537,46 @@ void ShaderViewer::editShader(ResourceId id, ShaderStage stage, const QString &e
                                    ToolWindowManager::LeftOf, ui->docking->areaOf(m_Errors), 0.5f));
     ui->docking->setToolWindowProperties(
         ui->compilationGroup,
+        ToolWindowManager::HideCloseButton | ToolWindowManager::DisallowFloatWindow);
+  }
+
+  // ---- HLSL 指令统计面板：仅在编辑 HLSL 时启用 ----
+  if(shaderEncoding == ShaderEncoding::HLSL && !m_Scintillas.isEmpty())
+  {
+    m_HLSLAnalyzer = new HLSLAnalyzerPanel(this);
+    m_HLSLAnalyzer->setWindowTitle(tr("DXBC 指令统计"));
+
+    // 默认 profile：从 stage 推导（简化：仅 5_0）
+    QString defProfile;
+    switch(stage)
+    {
+      case ShaderStage::Vertex:   defProfile = lit("vs_5_0"); break;
+      case ShaderStage::Pixel:    defProfile = lit("ps_5_0"); break;
+      case ShaderStage::Compute:  defProfile = lit("cs_5_0"); break;
+      case ShaderStage::Geometry: defProfile = lit("gs_5_0"); break;
+      case ShaderStage::Hull:     defProfile = lit("hs_5_0"); break;
+      case ShaderStage::Domain:   defProfile = lit("ds_5_0"); break;
+      default: defProfile = lit("ps_5_0"); break;
+    }
+    m_HLSLAnalyzer->SetDefaults(entryPoint, defProfile);
+
+    // 绑定源码提供器：读取当前活动 Scintilla 的全文
+    ShaderViewer *self = this;
+    m_HLSLAnalyzer->SetSourceProvider([self]() -> QString {
+      ScintillaEdit *cur = self->currentScintilla();
+      if(!cur && !self->m_Scintillas.isEmpty())
+        cur = self->m_Scintillas.front();
+      if(!cur)
+        return QString();
+      return QString::fromUtf8(cur->getText(cur->textLength() + 1));
+    });
+
+    ui->docking->addToolWindow(
+        m_HLSLAnalyzer,
+        ToolWindowManager::AreaReference(ToolWindowManager::BottomOf,
+                                         ui->docking->areaOf(m_Errors), 0.5f));
+    ui->docking->setToolWindowProperties(
+        m_HLSLAnalyzer,
         ToolWindowManager::HideCloseButton | ToolWindowManager::DisallowFloatWindow);
   }
 }

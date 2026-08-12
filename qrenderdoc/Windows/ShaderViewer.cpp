@@ -540,25 +540,53 @@ void ShaderViewer::editShader(ResourceId id, ShaderStage stage, const QString &e
         ToolWindowManager::HideCloseButton | ToolWindowManager::DisallowFloatWindow);
   }
 
-  // ---- HLSL 指令统计面板：仅在编辑 HLSL 时启用 ----
-  if(shaderEncoding == ShaderEncoding::HLSL && !m_Scintillas.isEmpty())
+  // ---- Shader 指令统计面板：在编辑 HLSL 或 GLSL 时启用 ----
+  if((shaderEncoding == ShaderEncoding::HLSL || shaderEncoding == ShaderEncoding::GLSL) &&
+     !m_Scintillas.isEmpty())
   {
     m_HLSLAnalyzer = new HLSLAnalyzerPanel(this);
-    m_HLSLAnalyzer->setWindowTitle(tr("DXBC 指令统计"));
+    m_HLSLAnalyzer->setWindowTitle(tr("Shader 指令统计"));
 
-    // 默认 profile：从 stage 推导（简化：仅 5_0）
+    // 通知面板当前源码语言
+    m_HLSLAnalyzer->SetSourceLanguage(
+        shaderEncoding == ShaderEncoding::HLSL ? ShaderSourceLang::HLSL : ShaderSourceLang::GLSL);
+
+    // 默认 HLSL profile / GLSL stage
     QString defProfile;
+    GLSLStage glslStage = GLSLStage::Fragment;
     switch(stage)
     {
-      case ShaderStage::Vertex:   defProfile = lit("vs_5_0"); break;
-      case ShaderStage::Pixel:    defProfile = lit("ps_5_0"); break;
-      case ShaderStage::Compute:  defProfile = lit("cs_5_0"); break;
-      case ShaderStage::Geometry: defProfile = lit("gs_5_0"); break;
-      case ShaderStage::Hull:     defProfile = lit("hs_5_0"); break;
-      case ShaderStage::Domain:   defProfile = lit("ds_5_0"); break;
-      default: defProfile = lit("ps_5_0"); break;
+      case ShaderStage::Vertex:
+        defProfile = lit("vs_5_0");
+        glslStage = GLSLStage::Vertex;
+        break;
+      case ShaderStage::Pixel:
+        defProfile = lit("ps_5_0");
+        glslStage = GLSLStage::Fragment;
+        break;
+      case ShaderStage::Compute:
+        defProfile = lit("cs_5_0");
+        glslStage = GLSLStage::Compute;
+        break;
+      case ShaderStage::Geometry:
+        defProfile = lit("gs_5_0");
+        glslStage = GLSLStage::Geometry;
+        break;
+      case ShaderStage::Hull:
+        defProfile = lit("hs_5_0");
+        glslStage = GLSLStage::TessControl;
+        break;
+      case ShaderStage::Domain:
+        defProfile = lit("ds_5_0");
+        glslStage = GLSLStage::TessEvaluation;
+        break;
+      default:
+        defProfile = lit("ps_5_0");
+        glslStage = GLSLStage::Fragment;
+        break;
     }
     m_HLSLAnalyzer->SetDefaults(entryPoint, defProfile);
+    m_HLSLAnalyzer->SetStage(glslStage);
 
     // 绑定源码提供器：读取当前活动 Scintilla 的全文
     ShaderViewer *self = this;
